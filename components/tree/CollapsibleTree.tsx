@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useEffect } from "react";
 import type { Person, Relationship } from "@/lib/types";
+import { siblingOrderCompare } from "@/lib/relationships";
 import { ChevronIcon } from "@/components/icons";
 
 type Props = {
@@ -22,25 +23,29 @@ type Maps = {
 
 function buildMaps(people: Person[], relationships: Relationship[]): Maps {
   const byId = new Map(people.map((p) => [p.id, p]));
+  const visible = new Set(byId.keys());
   const children = new Map<string, string[]>();
   const parentOf = new Map<string, string>();
-  // First-encountered parent wins, so a child with multiple `parent_of` rows
-  // (e.g. both mother and father) is rendered exactly once in the tree.
+  // First-encountered visible parent wins, so a child with multiple `parent_of`
+  // rows (e.g. both mother and father — or a hidden mother under the
+  // female-visibility RLS) is rendered exactly once, under whichever parent
+  // the viewer can see.
   for (const r of relationships) {
     if (r.type !== "parent_of") continue;
+    if (!visible.has(r.fromId) || !visible.has(r.toId)) continue;
     if (parentOf.has(r.toId)) continue;
     parentOf.set(r.toId, r.fromId);
     const list = children.get(r.fromId) ?? [];
     list.push(r.toId);
     children.set(r.fromId, list);
   }
-  // Sort children by generation then name for stable ordering
+  // Sort children by explicit birthOrder (then year, then name) so the tree
+  // reflects oldest-to-youngest sibling order set by editors.
   for (const [k, v] of children) {
     v.sort((a, b) => {
       const pa = byId.get(a), pb = byId.get(b);
-      const ga = pa?.generation ?? 0, gb = pb?.generation ?? 0;
-      if (ga !== gb) return ga - gb;
-      return (pa?.nameAr ?? "").localeCompare(pb?.nameAr ?? "");
+      if (!pa || !pb) return 0;
+      return siblingOrderCompare(pa, pb);
     });
     children.set(k, v);
   }

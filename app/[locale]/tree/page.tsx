@@ -11,7 +11,10 @@ export default async function TreePage({ params }: { params: Promise<{ locale: s
   const locale = rawLocale as Locale;
   const t = getDictionary(locale);
 
-  const [{ people, relationships }, editor] = await Promise.all([loadTree(), isEditor()]);
+  const editor = await isEditor();
+  const { people, relationships } = await loadTree({
+    maskFemaleAs: editor ? null : t.tree.redactedFemale,
+  });
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6">

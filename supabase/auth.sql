@@ -39,6 +39,15 @@ create policy "editors write people" on public.people
   using      (auth.uid() in (select user_id from public.editors))
   with check (auth.uid() in (select user_id from public.editors));
 
+-- Public read on people is unconditional. Female-name redaction for
+-- non-editors is done in the application layer (loadTree → maskFemaleAs)
+-- so that the relationship graph stays intact for viewers — they see the
+-- node, just not the name.
+drop policy if exists "public read males, editors see all" on public.people;
+drop policy if exists "public read people" on public.people;
+create policy "public read people" on public.people
+  for select using (true);
+
 drop policy if exists "auth write relationships" on public.relationships;
 drop policy if exists "editors write relationships" on public.relationships;
 create policy "editors write relationships" on public.relationships

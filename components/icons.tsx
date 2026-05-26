@@ -43,6 +43,18 @@ export function BranchIcon({ className }: IconProps) {
   );
 }
 
+export function ChildIcon({ className }: IconProps) {
+  // Small sapling — single stem with bud, two leaves spreading down.
+  // Visually distinct from BranchIcon (which points upward at roots).
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+      <circle cx="12" cy="5" r="2.4" />
+      <path d="M12 7v12" strokeLinecap="round" />
+      <path d="M12 14l-5 4M12 14l5 4" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export function LeafIcon({ className }: IconProps) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -73,6 +85,15 @@ export function CloseIcon({ className }: IconProps) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <path d="M6 6l12 12M18 6L6 18" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function EditIcon({ className }: IconProps) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M4 20h4l10-10-4-4L4 16v4z" strokeLinejoin="round" />
+      <path d="M14 6l4 4" />
     </svg>
   );
 }
@@ -132,11 +153,12 @@ export function FocusIcon({ className }: IconProps) {
 
 export function getRelationshipIcon(name: string, className = "h-4 w-4") {
   switch (name) {
-    case "rings": return <RingsIcon className={className} />;
-    case "blood": return <BloodIcon className={className} />;
-    case "milk":  return <MilkIcon className={className} />;
-    case "branch":return <BranchIcon className={className} />;
-    case "leaf":  return <LeafIcon className={className} />;
-    default:      return <span className={className} aria-hidden>•</span>;
+    case "rings":  return <RingsIcon className={className} />;
+    case "blood":  return <BloodIcon className={className} />;
+    case "milk":   return <MilkIcon className={className} />;
+    case "branch": return <BranchIcon className={className} />;
+    case "child":  return <ChildIcon className={className} />;
+    case "leaf":   return <LeafIcon className={className} />;
+    default:       return <span className={className} aria-hidden>•</span>;
   }
 }

@@ -26,9 +26,22 @@ create table if not exists public.people (
   family_en     text default 'Al-Batati',
   generation    int,
   external_family_id text,
+  -- Explicit order among siblings (1 = oldest, lower numbers come first).
+  -- Nullable; tree views fall back to birth_year, then name.
+  birth_order   int,
+  -- Contact / link fields, all nullable.
+  phone         text,
+  email         text,
+  website       text,
   created_at    timestamptz not null default now(),
   updated_at    timestamptz not null default now()
 );
+-- Idempotent migrations for existing tables — re-running this file just adds
+-- the missing columns rather than failing.
+alter table public.people add column if not exists birth_order int;
+alter table public.people add column if not exists phone       text;
+alter table public.people add column if not exists email       text;
+alter table public.people add column if not exists website     text;
 create index if not exists people_generation_idx on public.people (generation);
 create index if not exists people_family_idx     on public.people (family_en);
 
@@ -46,11 +59,24 @@ create table if not exists public.relationships (
   start_year  int,
   end_year    int,
   notes       text,
+  -- For `spouse_of` rows only: explicit ordering among `from_id`'s marriages.
+  -- 1 = first/earliest marriage, ascending. Nullable; FocusView falls back to
+  -- insertion order. Convention: edited from the perspective of whichever
+  -- person is currently centered in PersonProfile, which is typically the
+  -- `from_id` since AddRelativeForm inserts spouse rows with the centered
+  -- person as `from_id`.
+  marriage_order int,
   created_at  timestamptz not null default now()
 );
 create index if not exists relationships_from_idx on public.relationships (from_id);
 create index if not exists relationships_to_idx   on public.relationships (to_id);
 create index if not exists relationships_type_idx on public.relationships (type);
+-- Idempotent migration for existing tables.
+alter table public.relationships add column if not exists marriage_order int;
+-- Each (type, from_id, to_id) triple must be unique, otherwise the UI sees
+-- ghost duplicates (same person appearing twice in someone's relationship list).
+alter table public.relationships drop constraint if exists relationships_uniq;
+alter table public.relationships add  constraint relationships_uniq unique (type, from_id, to_id);
 
 -- Sources
 create table if not exists public.sources (

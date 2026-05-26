@@ -29,12 +29,21 @@ export interface Person {
   familyEn?: string;
   /** Generation index — used for the layered tree (0 = founder/eldest) */
   generation?: number;
+  /** Explicit ordering among siblings, lower number = older. Optional. */
+  birthOrder?: number | null;
+  phone?: string;
+  email?: string;
+  website?: string;
   /** Foreign family reference — if this person belongs primarily to another family
    *  (e.g. an in-law), this points to a separate Tree document/identifier. */
   externalFamilyId?: string | null;
   sources?: string[]; // ids of source records
   createdAt?: string;
   updatedAt?: string;
+  /** True when the displayed name has been server-side redacted (e.g. female
+   *  names for non-editor viewers). The relationship/structure is preserved,
+   *  only the rendered name is replaced. */
+  nameRedacted?: boolean;
 }
 
 /**
@@ -65,6 +74,10 @@ export interface Relationship {
   endYear?: number | null;
   notes?: string;
   sources?: string[];
+  /** For `spouse_of` rows only: explicit ordering among the `fromId`'s
+   *  marriages, lower = earlier (1 = first marriage). Nullable; views fall
+   *  back to insertion order when missing. */
+  marriageOrder?: number | null;
 }
 
 export interface SourceRef {

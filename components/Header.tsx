@@ -12,9 +12,10 @@ export default async function Header({ locale }: { locale: Locale }) {
     { href: "", label: t.nav.home },
     { href: "/about", label: t.nav.about },
     { href: "/tree", label: t.nav.tree },
+    { href: "/relate", label: t.nav.relate },
+    { href: "/insights", label: t.nav.insights },
     { href: "/sources", label: t.nav.sources },
     { href: "/events", label: t.nav.events },
-    { href: "/insights", label: t.nav.insights },
   ];
 
   return (
