@@ -77,6 +77,59 @@ export function CloseIcon({ className }: IconProps) {
   );
 }
 
+export function ChevronIcon({ className }: IconProps) {
+  // Points down by default. Rotate via className (e.g. `-rotate-90`) for collapsed state.
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+      <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+export function SearchIcon({ className }: IconProps) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <circle cx="11" cy="11" r="7" />
+      <path d="M21 21l-4.3-4.3" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function TreeIcon({ className }: IconProps) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <circle cx="12" cy="4" r="2" />
+      <circle cx="6" cy="12" r="2" />
+      <circle cx="18" cy="12" r="2" />
+      <circle cx="4" cy="20" r="1.6" />
+      <circle cx="9" cy="20" r="1.6" />
+      <circle cx="15" cy="20" r="1.6" />
+      <circle cx="20" cy="20" r="1.6" />
+      <path d="M12 6v2M12 8L6 10M12 8l6 2M6 14v2M6 16l-2 2M6 16l3 2M18 14v2M18 16l-3 2M18 16l2 2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function LayersIcon({ className }: IconProps) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M12 3l9 5-9 5-9-5 9-5z" />
+      <path d="M3 13l9 5 9-5" opacity=".7" />
+      <path d="M3 17l9 5 9-5" opacity=".4" />
+    </svg>
+  );
+}
+
+export function FocusIcon({ className }: IconProps) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <circle cx="12" cy="12" r="3" />
+      <circle cx="12" cy="12" r="8" opacity=".5" />
+      <path d="M12 2v3M12 19v3M2 12h3M19 12h3" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export function getRelationshipIcon(name: string, className = "h-4 w-4") {
   switch (name) {
     case "rings": return <RingsIcon className={className} />;

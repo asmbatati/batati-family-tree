@@ -7,6 +7,82 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ---
 
+## [Unreleased] — 2026-05-25
+
+### Added
+- **First real Supabase read** — `app/[locale]/tree/page.tsx` now calls `loadTree()` (in `lib/data/loadTree.ts`) instead of importing seed directly. The loader queries `public.people` and `public.relationships` via `getServerSupabase()`, maps snake_case columns to the camelCase TS types, and falls back to seed data when (a) env vars are absent, (b) the query errors, or (c) the `people` table is empty. The null-safe fallback path documented in CLAUDE.md is preserved.
+  - User prompt: *"Ok, the database has some rows now. What should I do next?"*
+- **Full 1430 H. family tree reconstructed from PowerPoint source** — `supabase/seed-tree.sql` contains INSERTs for **695 people across 11 generations + 694 parent_of relationships**, reverse-engineered from the legacy `الشجرة كاملة 1430.ppt` (Microsoft Org Chart 2003 binary). Pipeline: PowerPoint COM → `.pptx` → unzipped → `ppt/drawings/vmlDrawing1.vml` parsed for 695 `<v:roundrect>` person boxes + 694 `<o:r>` connector rules; each shape's `<p:textdata id="rIdN"/>` mapped via `vmlDrawing1.vml.rels` → `legacyDiagramTextN.bin` (UTF-16LE Arabic name). Root: ناصر (Gen 0) → 6 sons (Gen 1) → fan-out to Gen 10. Intermediate artifacts (extracted text, tree JSON, rendered PNG) live under `ppt-extract/` (gitignored). Defaults: `gender='male'`, `status='unknown'` — refine via UI.
+  - User prompt: *"analyze the .ppt to make the database, then I will expand"*
+
+- **Multi-view tree visualization** — the tree page now supports three modes selectable via a segmented `ViewModeToggle` at the top:
+  - **Tree** (default) — new `components/tree/CollapsibleTree.tsx`. Vertical indented tree, click ▾ to expand, name to open profile, scales to 695+ nodes. Search auto-expands ancestor paths to matches.
+  - **Focus** — the existing radial relationship view, now reached either by selecting a person + switching mode, or via a "Focus on" button in the side panel. Disabled in the toggle until a person is selected.
+  - **Layers** — the prior generation-grid; each row is now scrollable instead of overflowing horizontally (Gen 7 has 207 people).
+- **Search** — `components/tree/TreeSearch.tsx`. Matches against `nameAr` (substring) and `nameEn` (case-insensitive). Live result count, clears via X button. In Tree mode, hits get highlighted and their ancestor path is auto-expanded.
+- **Profile is now a side panel, not a modal** — `components/tree/PersonProfile.tsx` changed from full-screen `fixed inset-0` with backdrop blur to a right-edge drawer (`fixed inset-y-0 end-0 w-full sm:w-[420px]`) with no backdrop, so the tree remains visible alongside the profile. Esc closes. Added a "Focus on" button in the panel header that switches the main view to Focus mode for the selected person.
+- **Dictionary additions** — `tree.views`, `tree.search`, `tree.actions` keys added to the `Dictionary` type and both `ar`/`en` records.
+- **New icons** — `ChevronIcon`, `SearchIcon`, `TreeIcon`, `LayersIcon`, `FocusIcon` in `components/icons.tsx`.
+  - User prompt: *"I can not see the tree view clearly. It pops only after I press on a name, and it appears blurred behind the person window. Add multiple views to the tree to visualize."*
+
+### Fixed
+- **CollapsibleTree multi-parent dedup** — when a person had multiple `parent_of` rows (e.g. both father and mother, as in the offline `lib/data/seed.ts`), they were rendered under each parent. Now `buildMaps` records only the first-encountered parent, so each person appears in the tree exactly once. The full set of parents is still shown in the side-panel relationships list.
+
+### Added — Authentication (magic link + editors gate)
+- **`proxy.ts` at repo root** — Next 16's renamed middleware. Refreshes the Supabase auth cookie on every request via `@supabase/ssr`'s `createServerClient`. No-op when Supabase env vars are missing. Matcher excludes static assets and image endpoints. (Note: originally `middleware.ts`; Next 16 deprecated that filename in favor of `proxy.ts` with an exported `proxy` function — both file and export renamed.)
+- **`supabase/auth.sql`** — Creates `public.editors (user_id, email, granted_at, granted_by)` referencing `auth.users`. Tightens write policies on every data table: previous `for all to authenticated` becomes `for all to authenticated using/with check (auth.uid() in (select user_id from public.editors))`. Public read access on `people/relationships/sources/events/person_sources` is unchanged. Includes a documented bootstrap step for granting the first editor.
+- **`lib/auth.ts`** — server-side `getCurrentUser()` and `isEditor()` helpers. Both are null-safe (return `null`/`false` when Supabase env is missing). `isEditor()` is a UX convenience — RLS is the actual security boundary.
+- **Login flow** — `app/[locale]/login/page.tsx` + `components/auth/LoginForm.tsx` (client). Email + "Send magic link" form using `supabase.auth.signInWithOtp({ emailRedirectTo: /auth/callback?next=/<locale> })`. States: idle → sending → sent / error. Gracefully degrades when Supabase isn't configured.
+- **Auth callback** — `app/auth/callback/route.ts`. GET handler reads `?code=...`, exchanges it for a session via `exchangeCodeForSession`, sets cookies on the redirect response, and forwards to `?next=...`. On error, redirects home with `?auth_error=...`.
+- **Sign-out** — `app/auth/signout/route.ts`. POST handler that invokes `supabase.auth.signOut()` and redirects to the page the user came from (origin-checked).
+- **Header now async** — `components/Header.tsx` is now an async server component. Reads `getCurrentUser()` + `isEditor()` in parallel; shows sign-in link when logged out, email pill (+ "Editor" badge if applicable) + sign-out button (as a `<form action="/auth/signout" method="post">`) when logged in. All routes that go through the locale layout are now `ƒ (Dynamic)` as a result — expected, since auth state must be live.
+- **Dictionary additions** — `auth.*` keys for both `ar` and `en` (signIn, signOut, loginTitle, loginSubtitle, emailLabel, emailPlaceholder, sendLink, sending, linkSent, linkSentHint, notConfigured, editor, notEditor, notEditorHint).
+  - User prompt: *"Implement Magic link + editors approach"*
+
+### Fixed
+- **Recursive RLS on `public.editors`** — initial policy used `auth.uid() in (select user_id from public.editors)`, which is self-referential under RLS and silently returned no rows for everyone. `isEditor()` therefore always returned false even after a user was inserted into `editors`. Replaced with `using (user_id = auth.uid())` — the only thing the app needs is to ask "am I in this table?" against the user's own row.
+  - User-facing migration to run on existing installs:
+    ```sql
+    drop policy if exists "editors readable by editors" on public.editors;
+    create policy "editors read own row" on public.editors
+      for select to authenticated using (user_id = auth.uid());
+    ```
+  - User prompt: *"I have ran this insert ... but still I am signed in but no editor badge!"*
+
+### Added — Add Relative writes (editor-gated)
+- **`components/tree/AddRelativeForm.tsx`** — client modal that opens when an editor clicks an "Add father / mother / son / …" button. Pure form (name in Arabic required, English optional). On submit, uses the browser Supabase client to (1) insert a new row in `public.people` with auto-computed gender + generation based on the relative type, then (2) insert a row in `public.relationships` with the right direction (`parent_of`, `spouse_of`, `sibling_of`, `milk_sibling_of`, or the uncle/aunt variants). Calls `router.refresh()` on success so the tree re-renders with the new node.
+- **`PersonProfile` now editor-aware** — `onAddRelative` prop dropped; the component owns the `pendingAdd` state and renders `AddRelativeForm` directly. When `isEditor === false`, the Add-quick-buttons row is replaced with a "you need editor permission" notice instead of being hidden, so non-editors understand why the actions aren't available.
+- **`isEditor` plumbed through** — `app/[locale]/tree/page.tsx` now awaits `loadTree()` and `isEditor()` in parallel and passes `editor` to `TreeCanvas`, which forwards it to `PersonProfile`. The check is a UX gate; RLS on `public.people` and `public.relationships` is the actual security boundary (rejects writes from non-editors regardless of UI).
+- **Relationship semantics encoded once** — `metaFor()` in `AddRelativeForm` maps each relative key to `{ type, gender, generation, fromIsCurrent }`. Direction matters: `parent_of(A,B)` means A is the parent of B, so "Add father" inserts a new person with `fromIsCurrent: false` (the new person is the parent). Spouse defaults to opposite gender of the current person; milk-sibling defaults to same gender.
+- **Dictionary additions** — `tree.add.nameArLabel`, `nameEnLabel`, `saving`, `notEditor`, `forPerson` in both `ar` and `en`.
+  - User prompt: *"Continue to fix the Add relative buttons"*
+
+### Fixed
+- **Stripped trailing sequence numbers from imported names** — 64 of the 695 names in the PowerPoint had a trailing space + integer (e.g. "محسن 7", "صالح 8") added by the original author as visual reference numbers. These leaked into the import. [supabase/seed-tree.sql](supabase/seed-tree.sql) was regenerated with the cleanup applied. For an existing live DB, run:
+  ```sql
+  update public.people
+  set name_ar = regexp_replace(name_ar, '\s+[0-9٠-٩]+\s*$', '')
+  where name_ar ~ '\s+[0-9٠-٩]+\s*$';
+  ```
+  Covers both ASCII (0–9) and Arabic-Indic (٠–٩) digits.
+  - User prompt: *"remove the numbers"*
+
+### To activate the auth system
+1. Run [supabase/auth.sql](supabase/auth.sql) in the Supabase SQL Editor.
+2. Visit `/<locale>/login` and request a magic link with the email you want to be the first editor.
+3. Click the link in the email — you'll be redirected back signed in.
+4. In Supabase, run the documented bootstrap INSERT (replacing the email):
+   ```sql
+   insert into public.editors (user_id, email)
+   select id, email from auth.users where email = 'YOUR_EMAIL_HERE';
+   ```
+5. Refresh the app — the header should now show the "Editor" badge next to your email.
+
+### Notes
+- `/[locale]/tree` is now `ƒ (Dynamic)` (server-rendered per request) instead of SSG — `loadTree()` calls `cookies()` via `getServerSupabase`, which forces dynamic rendering. Intentional: fresh DB reads on each visit.
+
+---
+
 ## [Unreleased] — 2026-05-18
 
 ### Project initialized — التهيئة الأولية للمشروع

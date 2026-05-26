@@ -37,3 +37,6 @@ next-env.d.ts
 # editor
 .vscode/
 .idea/
+
+# PowerPoint extraction intermediates (regenerated from الشجرة كاملة 1430.ppt)
+/ppt-extract/

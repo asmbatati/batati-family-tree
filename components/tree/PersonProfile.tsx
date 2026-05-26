@@ -1,15 +1,25 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Person, Relationship } from "@/lib/types";
 import { RELATIONSHIP_STYLE } from "@/lib/types";
-import { CloseIcon, PlusIcon, getRelationshipIcon } from "@/components/icons";
+import { CloseIcon, PlusIcon, FocusIcon, getRelationshipIcon } from "@/components/icons";
+import AddRelativeForm from "./AddRelativeForm";
+
+type RelativeKey =
+  | "father" | "mother"
+  | "son" | "daughter"
+  | "brother" | "sister"
+  | "spouse" | "milk"
+  | "uncleP" | "uncleM"
+  | "auntP" | "auntM";
 
 type Props = {
   person: Person;
   people: Person[];
   relationships: Relationship[];
   locale: "ar" | "en";
+  isEditor: boolean;
   dict: {
     profile: string;
     born: string;
@@ -23,20 +33,32 @@ type Props = {
     close: string;
   };
   relationLabels: Record<string, string>;
+  addDict: {
+    title: string;
+    save: string;
+    cancel: string;
+    nameArLabel: string;
+    nameEnLabel: string;
+    saving: string;
+    notEditor: string;
+    forPerson: string;
+  };
+  focusOnLabel: string;
   onClose: () => void;
   onSelect: (id: string) => void;
-  onAddRelative: (type: string) => void;
+  onFocus: () => void;
 };
 
-const ADD_OPTIONS = [
+const ADD_OPTIONS: RelativeKey[] = [
   "father", "mother", "son", "daughter",
   "brother", "sister", "spouse", "milk",
-  "uncleP", "uncleM", "auntP", "auntM"
+  "uncleP", "uncleM", "auntP", "auntM",
 ];
 
 export default function PersonProfile({
-  person, people, relationships, locale, dict, relationLabels, onClose, onSelect, onAddRelative
+  person, people, relationships, locale, isEditor, dict, relationLabels, addDict, focusOnLabel, onClose, onSelect, onFocus
 }: Props) {
+  const [pendingAdd, setPendingAdd] = useState<RelativeKey | null>(null);
   const peopleById = useMemo(() => new Map(people.map((p) => [p.id, p])), [people]);
 
   // Build list of this person's relationships (incoming + outgoing)
@@ -55,20 +77,36 @@ export default function PersonProfile({
   const name = locale === "ar" ? person.nameAr : (person.nameEn || person.nameAr);
   const family = locale === "ar" ? person.familyAr : (person.familyEn || person.familyAr);
 
+  // Close on Escape
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 backdrop-blur-sm sm:items-center" onClick={onClose}>
-      <div
-        className="relative w-full max-w-xl rounded-t-3xl bg-white p-6 shadow-2xl sm:rounded-3xl"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <aside
+      role="dialog"
+      aria-label={dict.profile}
+      className="fixed inset-y-0 end-0 z-30 flex w-full flex-col bg-white shadow-2xl sm:w-[420px] sm:border-s sm:border-sand-200"
+    >
+      <div className="flex items-center justify-between border-b border-sand-100 px-5 py-3">
+        <button
+          onClick={onFocus}
+          className="inline-flex items-center gap-1.5 rounded-full bg-sand-100 px-3 py-1 text-xs font-medium text-sand-700 hover:bg-sand-200"
+        >
+          <FocusIcon className="h-3.5 w-3.5" />
+          {focusOnLabel}
+        </button>
         <button
           onClick={onClose}
-          className="absolute top-3 end-3 rounded-full p-1.5 text-sand-600 hover:bg-sand-100"
+          className="grid h-8 w-8 place-items-center rounded-full text-sand-600 hover:bg-sand-100"
           aria-label={dict.close}
         >
           <CloseIcon className="h-5 w-5" />
         </button>
-
+      </div>
+      <div className="flex-1 overflow-y-auto p-6">
         <div className="flex items-start gap-4">
           <div className={"grid h-14 w-14 place-items-center rounded-full text-white font-display text-xl " + (person.gender === "male" ? "bg-gradient-to-br from-sand-500 to-sand-700" : "bg-gradient-to-br from-rose-400 to-rose-600")}>
             {name.charAt(0)}
@@ -154,25 +192,51 @@ export default function PersonProfile({
           </ul>
         </div>
 
-        {/* Add-relative quick buttons */}
+        {/* Add-relative quick buttons (editors only) */}
         <div className="mt-5">
           <div className="mb-2 flex items-center gap-2 text-sm font-medium text-sand-700">
             <PlusIcon className="h-4 w-4" /> {dict.addRelative}
           </div>
-          <div className="flex flex-wrap gap-1.5">
-            {ADD_OPTIONS.map((k) => (
-              <button
-                key={k}
-                onClick={() => onAddRelative(k)}
-                className="inline-flex items-center gap-1 rounded-full border border-sand-200 bg-white px-2.5 py-1 text-xs text-sand-700 hover:bg-sand-50"
-              >
-                <PlusIcon className="h-3 w-3" />
-                {relationLabels[k] ?? k}
-              </button>
-            ))}
-          </div>
+          {isEditor ? (
+            <div className="flex flex-wrap gap-1.5">
+              {ADD_OPTIONS.map((k) => (
+                <button
+                  key={k}
+                  onClick={() => setPendingAdd(k)}
+                  className="inline-flex items-center gap-1 rounded-full border border-sand-200 bg-white px-2.5 py-1 text-xs text-sand-700 hover:bg-sand-50"
+                >
+                  <PlusIcon className="h-3 w-3" />
+                  {relationLabels[k] ?? k}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-xl border border-sand-200 bg-sand-50 px-3 py-2 text-xs text-sand-700">
+              {addDict.notEditor}
+            </div>
+          )}
         </div>
       </div>
-    </div>
+
+      {pendingAdd && (
+        <AddRelativeForm
+          relativeKey={pendingAdd}
+          currentPerson={person}
+          locale={locale}
+          relationLabel={relationLabels[pendingAdd] ?? pendingAdd}
+          dict={{
+            title: addDict.title,
+            save: addDict.save,
+            cancel: addDict.cancel,
+            nameArLabel: addDict.nameArLabel,
+            nameEnLabel: addDict.nameEnLabel,
+            saving: addDict.saving,
+            forPerson: addDict.forPerson,
+            close: dict.close,
+          }}
+          onClose={() => setPendingAdd(null)}
+        />
+      )}
+    </aside>
   );
 }

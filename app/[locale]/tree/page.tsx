@@ -1,7 +1,8 @@
 import { notFound } from "next/navigation";
 import { getDictionary } from "@/lib/i18n/dictionaries";
 import { isLocale, type Locale } from "@/lib/i18n/config";
-import { seedPeople, seedRelationships } from "@/lib/data/seed";
+import { loadTree } from "@/lib/data/loadTree";
+import { isEditor } from "@/lib/auth";
 import TreeCanvas from "@/components/tree/TreeCanvas";
 
 export default async function TreePage({ params }: { params: Promise<{ locale: string }> }) {
@@ -10,9 +11,7 @@ export default async function TreePage({ params }: { params: Promise<{ locale: s
   const locale = rawLocale as Locale;
   const t = getDictionary(locale);
 
-  // TODO: when Supabase is configured, fetch from DB instead of seed.
-  const people = seedPeople;
-  const relationships = seedRelationships;
+  const [{ people, relationships }, editor] = await Promise.all([loadTree(), isEditor()]);
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
@@ -25,9 +24,13 @@ export default async function TreePage({ params }: { params: Promise<{ locale: s
         people={people}
         relationships={relationships}
         locale={locale}
+        isEditor={editor}
         treeDict={{
           layers: t.tree.layers,
           focus: t.tree.focus,
+          views: t.tree.views,
+          search: t.tree.search,
+          actions: t.tree.actions,
           relations: t.tree.relations,
           add: t.tree.add
         }}

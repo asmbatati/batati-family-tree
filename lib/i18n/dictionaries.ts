@@ -31,6 +31,22 @@ export type Dictionary = {
   tree: {
     title: string;
     subtitle: string;
+    views: {
+      tree: string;
+      focus: string;
+      layers: string;
+      focusEmpty: string;
+    };
+    search: {
+      placeholder: string;
+      noResults: string;
+      results: string;
+    };
+    actions: {
+      expandAll: string;
+      collapseAll: string;
+      focusOn: string;
+    };
     layers: {
       title: string;
       men: string;
@@ -59,7 +75,17 @@ export type Dictionary = {
       auntM: string;  // خالة
       cousin: string;
     };
-    add: { title: string; choose: string; save: string; cancel: string };
+    add: {
+      title: string;
+      choose: string;
+      save: string;
+      cancel: string;
+      nameArLabel: string;
+      nameEnLabel: string;
+      saving: string;
+      notEditor: string;
+      forPerson: string;
+    };
   };
   sources: {
     title: string;
@@ -112,6 +138,22 @@ export type Dictionary = {
     rights: string;
     builtWith: string;
   };
+  auth: {
+    signIn: string;
+    signOut: string;
+    loginTitle: string;
+    loginSubtitle: string;
+    emailLabel: string;
+    emailPlaceholder: string;
+    sendLink: string;
+    sending: string;
+    linkSent: string;
+    linkSentHint: string;
+    notConfigured: string;
+    editor: string;
+    notEditor: string;
+    notEditorHint: string;
+  };
 };
 
 const ar: Dictionary = {
@@ -149,6 +191,22 @@ const ar: Dictionary = {
   tree: {
     title: "شجرة العائلة",
     subtitle: "تنقّل بين الطبقات، واضغط على أي اسم للتركيز عليه وعرض روابطه.",
+    views: {
+      tree: "شجرة",
+      focus: "تركيز",
+      layers: "بطبقات",
+      focusEmpty: "اختر شخصاً من الشجرة لعرض روابطه."
+    },
+    search: {
+      placeholder: "ابحث عن شخص…",
+      noResults: "لا توجد نتائج",
+      results: "نتيجة"
+    },
+    actions: {
+      expandAll: "توسيع الكل",
+      collapseAll: "طيّ الكل",
+      focusOn: "تركيز عليه"
+    },
     layers: {
       title: "الطبقات",
       men: "الرجال",
@@ -177,7 +235,17 @@ const ar: Dictionary = {
       auntM: "خالة",
       cousin: "ابن/ابنة عم/خال"
     },
-    add: { title: "إضافة قريب", choose: "اختر نوع الرابط", save: "حفظ", cancel: "إلغاء" }
+    add: {
+      title: "إضافة",
+      choose: "اختر نوع الرابط",
+      save: "حفظ",
+      cancel: "إلغاء",
+      nameArLabel: "الاسم بالعربية",
+      nameEnLabel: "الاسم بالإنجليزية (اختياري)",
+      saving: "جارٍ الحفظ…",
+      notEditor: "تحتاج صلاحية محرر لإضافة الأقارب.",
+      forPerson: "كقريب لـ"
+    }
   },
   sources: {
     title: "المصادر",
@@ -229,6 +297,22 @@ const ar: Dictionary = {
   footer: {
     rights: "جميع الحقوق محفوظة لعائلة البطاطي",
     builtWith: "بُني بـ Next.js و Supabase"
+  },
+  auth: {
+    signIn: "تسجيل الدخول",
+    signOut: "تسجيل الخروج",
+    loginTitle: "تسجيل دخول المحررين",
+    loginSubtitle: "أدخل بريدك الإلكتروني وسنرسل لك رابط دخول. لا يحتاج كلمة سر.",
+    emailLabel: "البريد الإلكتروني",
+    emailPlaceholder: "name@example.com",
+    sendLink: "أرسل رابط الدخول",
+    sending: "جاري الإرسال…",
+    linkSent: "تم الإرسال ✓",
+    linkSentHint: "افتح بريدك واضغط على الرابط للدخول. قد يصل خلال دقيقة.",
+    notConfigured: "لم يتم إعداد Supabase بعد. أضف مفاتيح البيئة وأعد التشغيل.",
+    editor: "محرر",
+    notEditor: "أنت مسجّل الدخول كقارئ.",
+    notEditorHint: "لا يمكنك التعديل حتى يضيفك المشرف لقائمة المحررين."
   }
 };
 
@@ -267,6 +351,22 @@ const en: Dictionary = {
   tree: {
     title: "Family tree",
     subtitle: "Toggle layers and click any name to focus on it and view its relationships.",
+    views: {
+      tree: "Tree",
+      focus: "Focus",
+      layers: "Layers",
+      focusEmpty: "Pick a person from the tree to see their relationships."
+    },
+    search: {
+      placeholder: "Search a person…",
+      noResults: "No results",
+      results: "result(s)"
+    },
+    actions: {
+      expandAll: "Expand all",
+      collapseAll: "Collapse all",
+      focusOn: "Focus on"
+    },
     layers: {
       title: "Layers",
       men: "Men",
@@ -295,7 +395,17 @@ const en: Dictionary = {
       auntM: "Aunt (maternal)",
       cousin: "Cousin"
     },
-    add: { title: "Add a relative", choose: "Choose relationship type", save: "Save", cancel: "Cancel" }
+    add: {
+      title: "Add",
+      choose: "Choose relationship type",
+      save: "Save",
+      cancel: "Cancel",
+      nameArLabel: "Name (Arabic)",
+      nameEnLabel: "Name (English, optional)",
+      saving: "Saving…",
+      notEditor: "You need editor permission to add relatives.",
+      forPerson: "as a relative of"
+    }
   },
   sources: {
     title: "Sources",
@@ -347,6 +457,22 @@ const en: Dictionary = {
   footer: {
     rights: "All rights reserved — Al-Batati Family",
     builtWith: "Built with Next.js and Supabase"
+  },
+  auth: {
+    signIn: "Sign in",
+    signOut: "Sign out",
+    loginTitle: "Editor sign-in",
+    loginSubtitle: "Enter your email — we'll send you a one-time link. No password required.",
+    emailLabel: "Email",
+    emailPlaceholder: "name@example.com",
+    sendLink: "Send magic link",
+    sending: "Sending…",
+    linkSent: "Sent ✓",
+    linkSentHint: "Open the email and click the link to sign in. May take a minute.",
+    notConfigured: "Supabase isn't configured. Add the env keys and restart.",
+    editor: "Editor",
+    notEditor: "Signed in as viewer.",
+    notEditorHint: "You can't edit until an admin adds you to the editors list."
   }
 };
 

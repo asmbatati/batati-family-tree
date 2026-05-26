@@ -2,17 +2,21 @@ import Link from "next/link";
 import { getDictionary } from "@/lib/i18n/dictionaries";
 import type { Locale } from "@/lib/i18n/config";
 import LanguageSwitcher from "./LanguageSwitcher";
+import { getCurrentUser, isEditor } from "@/lib/auth";
 
-export default function Header({ locale }: { locale: Locale }) {
+export default async function Header({ locale }: { locale: Locale }) {
   const t = getDictionary(locale);
+  const [user, editor] = await Promise.all([getCurrentUser(), isEditor()]);
+
   const items = [
     { href: "", label: t.nav.home },
     { href: "/about", label: t.nav.about },
     { href: "/tree", label: t.nav.tree },
     { href: "/sources", label: t.nav.sources },
     { href: "/events", label: t.nav.events },
-    { href: "/insights", label: t.nav.insights }
+    { href: "/insights", label: t.nav.insights },
   ];
+
   return (
     <header className="sticky top-0 z-40 border-b border-sand-200/70 bg-sand-50/80 backdrop-blur">
       <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
@@ -41,7 +45,10 @@ export default function Header({ locale }: { locale: Locale }) {
           </ul>
         </nav>
 
-        <LanguageSwitcher currentLocale={locale} />
+        <div className="flex items-center gap-2">
+          <AuthArea locale={locale} user={user} editor={editor} dict={t.auth} />
+          <LanguageSwitcher currentLocale={locale} />
+        </div>
       </div>
 
       {/* Mobile nav */}
@@ -60,5 +67,55 @@ export default function Header({ locale }: { locale: Locale }) {
         </ul>
       </nav>
     </header>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+function AuthArea({
+  locale,
+  user,
+  editor,
+  dict,
+}: {
+  locale: Locale;
+  user: { email?: string | null } | null;
+  editor: boolean;
+  dict: {
+    signIn: string;
+    signOut: string;
+    editor: string;
+  };
+}) {
+  if (!user) {
+    return (
+      <Link
+        href={`/${locale}/login`}
+        className="hidden rounded-full bg-sand-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-sand-800 sm:inline-flex"
+      >
+        {dict.signIn}
+      </Link>
+    );
+  }
+
+  return (
+    <div className="hidden items-center gap-2 sm:flex">
+      <div className="flex items-center gap-1.5 rounded-full bg-white/80 px-3 py-1 text-xs text-sand-700 shadow-soft">
+        {editor && (
+          <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-800">
+            {dict.editor}
+          </span>
+        )}
+        <span className="max-w-[140px] truncate">{user.email}</span>
+      </div>
+      <form action="/auth/signout" method="post">
+        <button
+          type="submit"
+          className="rounded-full border border-sand-200 bg-white px-3 py-1.5 text-xs text-sand-700 hover:bg-sand-100"
+        >
+          {dict.signOut}
+        </button>
+      </form>
+    </div>
   );
 }
