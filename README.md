@@ -3,7 +3,10 @@
 > منصة حديثة بلغتين (عربي/إنجليزي) لتوثيق شجرة عائلة البطاطي.
 > Modern bilingual (Ar/En) family-tree platform for the Al-Batati family.
 
-[![Next.js](https://img.shields.io/badge/Next.js-14-black)](https://nextjs.org)
+**🌐 Live:** [https://batati-family-tree.vercel.app](https://batati-family-tree.vercel.app)
+
+[![Next.js](https://img.shields.io/badge/Next.js-16-black)](https://nextjs.org)
+[![React](https://img.shields.io/badge/React-19-61dafb)](https://react.dev)
 [![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL-3ecf8e)](https://supabase.com)
 [![Tailwind](https://img.shields.io/badge/TailwindCSS-3-38bdf8)](https://tailwindcss.com)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6)](https://www.typescriptlang.org/)
@@ -38,9 +41,10 @@
 
 ## 🛠️ التقنيات / Stack
 
-- **Framework:** Next.js 14 (App Router) + React 18 + TypeScript
+- **Framework:** Next.js 16 (App Router, Turbopack) + React 19 + TypeScript
 - **Styling:** Tailwind CSS 3 with a custom desert/heritage palette
-- **Database / Auth:** Supabase (PostgreSQL + Row-Level Security)
+- **Database / Auth:** Supabase (PostgreSQL + Row-Level Security, magic-link email auth)
+- **Hosting:** Vercel (auto-deploys from `main`)
 - **i18n:** Per-route locale segment (`/ar`, `/en`) with full RTL/LTR direction switching
 
 ---
@@ -61,10 +65,53 @@ npm run dev
 ```
 
 ### إعداد Supabase / Supabase setup
-1. أنشئ مشروعاً جديداً على [supabase.com](https://supabase.com).
-2. افتح SQL Editor والصق محتوى `supabase/schema.sql` ثم نفّذه.
-3. انسخ مفتاحَيّ `NEXT_PUBLIC_SUPABASE_URL` و `NEXT_PUBLIC_SUPABASE_ANON_KEY` إلى `.env.local`.
-4. أعد تشغيل `npm run dev`.
+
+Run these SQL files **in order** in the Supabase Dashboard → **SQL Editor**:
+
+1. **[`supabase/schema.sql`](supabase/schema.sql)** — tables, RLS, public-read policies, the `relationships_uniq` constraint, and idempotent migrations for `birth_order` / `marriage_order` / `phone` / `email` / `website`. Safe to re-run; uses `if not exists` everywhere.
+
+2. **[`supabase/dedupe-relationships.sql`](supabase/dedupe-relationships.sql)** — **run this if you're upgrading an existing project**. Without it, `schema.sql`'s `add constraint relationships_uniq` step silently fails when duplicate `(type, from_id, to_id)` rows already exist, leaving the table without the unique index. The form then stacks duplicate `parent_of` rows on every Save click. Symptoms: "I add a relative but the relation doesn't show up" / "sometimes it works".
+
+3. **[`supabase/auth.sql`](supabase/auth.sql)** — creates the `public.editors` gate table and tightens write RLS to editors-only. Public reads stay open.
+
+4. **[`supabase/seed-tree.sql`](supabase/seed-tree.sql)** (optional) — 695-person family seed extracted from the 1430 H. PowerPoint Org Chart.
+
+5. After every schema change, ping PostgREST so the cache picks up new columns:
+   ```sql
+   notify pgrst, 'reload schema';
+   ```
+
+6. **Copy your keys** from Supabase → Settings → **API Keys**:
+   - `NEXT_PUBLIC_SUPABASE_URL` — the project URL.
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY` — the **publishable** / anon key (`sb_publishable_…` or legacy `eyJ…` anon JWT). Do **not** use the `sb_secret_…` / `service_role` key here — Supabase's SDK refuses to use it in the browser with "Forbidden use of secret API key in browser".
+
+7. **Bootstrap your first editor** (after you log in once via magic link):
+   ```sql
+   insert into public.editors (user_id, email)
+   select id, email from auth.users where email = 'YOUR_EMAIL_HERE'
+   on conflict (user_id) do nothing;
+   ```
+
+### Auth callback URLs
+
+In Supabase → **Authentication → URL Configuration**:
+- **Site URL**: your production origin, e.g. `https://batati-family-tree.vercel.app` (or `http://localhost:3000` for purely local work).
+- **Redirect URLs**: a wildcard entry covers all callback flows:
+  ```
+  https://batati-family-tree.vercel.app/**
+  http://localhost:3000/**
+  ```
+
+---
+
+## ☁️ النشر على Vercel / Deploy to Vercel
+
+1. Push the repo to GitHub and import it on [vercel.com](https://vercel.com). Next 16 is auto-detected.
+2. In Vercel → **Settings → Environment Variables**, add both keys to **Production, Preview, and Development**:
+   - `NEXT_PUBLIC_SUPABASE_URL`
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+3. Trigger a fresh deploy (Vercel doesn't pick up env-var changes on existing builds).
+4. Add your Vercel URL(s) to Supabase's Site URL + Redirect URLs (see above) — otherwise the magic-link flow lands on the wrong origin.
 
 ---
 
@@ -104,7 +151,11 @@ npm run dev
 │   │   └── server.ts        # Server Supabase client
 │   └── types.ts             # Domain types (Person, Relationship, …)
 ├── supabase/
-│   └── schema.sql           # Full PostgreSQL schema + RLS policies
+│   ├── schema.sql              # Tables, RLS, public-read policies, constraints
+│   ├── auth.sql                # editors-table gate + write RLS
+│   ├── seed-tree.sql           # 695-person family seed
+│   └── dedupe-relationships.sql # Cleans duplicate (type, from_id, to_id) rows
+├── proxy.ts                 # Next 16 proxy (renamed middleware) — refreshes auth cookie
 ├── CHANGELOG.md             # Mandatory project changelog (prompts + decisions)
 ├── README.md
 └── package.json
@@ -120,11 +171,39 @@ npm run dev
 - [x] شجرة العائلة بطبقات + وضع التركيز
 - [x] بروفايل الشخص + أزرار إضافة قريب
 - [x] مخطط قاعدة بيانات Supabase
-- [ ] ربط الإضافة الفعلية بقاعدة البيانات (Create/Update people & relationships)
+- [x] ربط الإضافة الفعلية بقاعدة البيانات (Create/Update people & relationships)
+- [x] مصادقة المستخدمين والصلاحيات (محرر / مشاهد) — magic-link + `editors` table
+- [x] استيراد 695 شخص من شجرة 1430 هـ (PowerPoint Org Chart)
+- [x] صفحة العلاقة بين شخصين (BFS shortest path)
+- [x] تصدير PDF من وضع التركيز
 - [ ] تحميل الصور (Supabase Storage)
-- [ ] مصادقة المستخدمين والصلاحيات (محرر / مشاهد)
 - [ ] استيراد/تصدير GEDCOM
 - [ ] تطبيق جوال (React Native أو PWA)
+
+---
+
+## 🩺 استكشاف الأخطاء / Troubleshooting
+
+### "I add a relative but the relation doesn't update"
+- **Cause:** the `relationships_uniq` constraint never got created (usually because duplicates blocked it), so every Save click inserts a fresh duplicate row instead of being rejected as a conflict.
+- **Fix:** run `supabase/dedupe-relationships.sql`, then re-run the `add constraint relationships_uniq` block from `supabase/schema.sql`. Verify with:
+  ```sql
+  select count(*) as total, count(distinct (type, from_id, to_id)) as distinct_triples
+  from public.relationships;
+  ```
+  The two numbers must match.
+
+### "Forbidden use of secret API key in browser"
+You put `sb_secret_…` (service_role) into `NEXT_PUBLIC_SUPABASE_ANON_KEY`. Use the `sb_publishable_…` (anon) key instead, and **rotate the leaked secret** in Supabase → API Keys (it shipped to every browser that loaded the page).
+
+### "Editor badge doesn't show after login"
+You logged in but you're not in `public.editors` on this Supabase project. Run the bootstrap INSERT in the Supabase setup section.
+
+### "Magic-link email arrives but clicking the link errors"
+Your **Site URL** or **Redirect URLs** in Supabase Authentication don't include your current origin. Add both your localhost and your Vercel URL — wildcards work: `https://batati-family-tree.vercel.app/**`.
+
+### "Tree doesn't refresh after add/edit (Next 16)"
+`router.refresh()` sometimes won't re-execute server components if Next thinks the route is cacheable. `app/[locale]/tree/page.tsx` exports `dynamic = "force-dynamic"` to defeat this. If you copy that page or add a new write-heavy route, do the same.
 
 ---
 

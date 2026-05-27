@@ -2,13 +2,14 @@ import Link from "next/link";
 import { getDictionary } from "@/lib/i18n/dictionaries";
 import type { Locale } from "@/lib/i18n/config";
 import LanguageSwitcher from "./LanguageSwitcher";
-import { getCurrentUser, isEditor } from "@/lib/auth";
+import { getViewerContext } from "@/lib/auth";
 
 export default async function Header({ locale }: { locale: Locale }) {
   const t = getDictionary(locale);
-  const [user, editor] = await Promise.all([getCurrentUser(), isEditor()]);
+  const viewer = await getViewerContext();
+  const ar = locale === "ar";
 
-  const items = [
+  const items: { href: string; label: string }[] = [
     { href: "", label: t.nav.home },
     { href: "/about", label: t.nav.about },
     { href: "/tree", label: t.nav.tree },
@@ -17,6 +18,12 @@ export default async function Header({ locale }: { locale: Locale }) {
     { href: "/sources", label: t.nav.sources },
     { href: "/events", label: t.nav.events },
   ];
+  if (viewer.user && viewer.claimedPersonId) {
+    items.push({ href: "/me", label: ar ? "لوحتي" : "My dashboard" });
+  }
+  if (viewer.isEditor) {
+    items.push({ href: "/admin/queue", label: ar ? "المراجعة" : "Moderation" });
+  }
 
   return (
     <header className="sticky top-0 z-40 border-b border-sand-200/70 bg-sand-50/80 backdrop-blur">
@@ -47,7 +54,7 @@ export default async function Header({ locale }: { locale: Locale }) {
         </nav>
 
         <div className="flex items-center gap-2">
-          <AuthArea locale={locale} user={user} editor={editor} dict={t.auth} />
+          <AuthArea locale={locale} user={viewer.user} editor={viewer.isEditor} dict={t.auth} />
           <LanguageSwitcher currentLocale={locale} />
         </div>
       </div>

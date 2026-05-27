@@ -508,6 +508,13 @@ export default function PersonProfile({
             close: dict.close,
           }}
           onClose={() => setEditing(false)}
+          onDeleted={() => {
+            // Person is gone — close the side panel too, so the parent (TreeCanvas)
+            // can clear `selectedId`. router.refresh() has already been called
+            // inside EditPersonForm.
+            setEditing(false);
+            onClose();
+          }}
         />
       )}
     </aside>

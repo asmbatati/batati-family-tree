@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createBrowserClient } from "@supabase/ssr";
 import type { Person, RelationshipType, Gender } from "@/lib/types";
@@ -122,6 +122,43 @@ export default function AddRelativeForm({
   const [pickedId, setPickedId] = useState<string | null>(null);
   const [pickQuery, setPickQuery] = useState("");
   const [pickOpen, setPickOpen] = useState(false);
+  // Locale-aware family-name field. Defaults to the appropriate Al-Batati
+  // spelling so the editor only types when adding a non-Batati person (e.g. a
+  // spouse from an in-law family).
+  const [family, setFamily] = useState<string>(locale === "ar" ? "البطاطي" : "Al-Batati");
+  // Splitter shared by the primary insert and the "other parent" inline-add
+  // inside submitLinkOthers.
+  const familyPayload = (typed: string): { family_ar: string; family_en: string } => {
+    const t = typed.trim();
+    const isDefaultBatati =
+      t === "" || t === "البطاطي" || t.toLowerCase() === "al-batati" || t.toLowerCase() === "albatati";
+    return isDefaultBatati
+      ? { family_ar: "البطاطي", family_en: "Al-Batati" }
+      : { family_ar: t, family_en: t };
+  };
+  // Tracks whether anything was written to the DB during this form session.
+  // If the user closes the modal (X / backdrop / Escape) after a successful
+  // primary insert — typically because they reached the linkOthers step and
+  // decided not to link anyone — we still need to refresh the route so the
+  // tree picks up the newly-created person + relationship rows.
+  const dirtyRef = useRef(false);
+  // After a successful write, do a full page reload instead of just
+  // router.refresh(). router.refresh() is unreliable in Next 16 dev mode —
+  // it sometimes silently no-ops, leaving the client snapshot of
+  // people/relationships stale. That stale snapshot then causes the form's
+  // client-side dedup check to miss already-existing rows, producing
+  // confusing "already exists" errors on subsequent edits. A full reload
+  // guarantees fresh server data and a fresh React tree.
+  const closeAndMaybeRefresh = () => {
+    if (dirtyRef.current) {
+      // Reload preserves the URL → editor lands back on the same locale,
+      // same route. The side panel's `selectedId` is React state and is
+      // lost; that's an acceptable trade-off for guaranteed fresh data.
+      window.location.reload();
+      return;
+    }
+    onClose();
+  };
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [newParentId, setNewParentId] = useState<string | null>(null);
@@ -136,9 +173,11 @@ export default function AddRelativeForm({
   const [otherParentNewName, setOtherParentNewName] = useState("");
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") closeAndMaybeRefresh(); };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
+    // closeAndMaybeRefresh is stable enough for this purpose (reads from refs).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onClose]);
 
   const currentName = locale === "ar" ? currentPerson.nameAr : (currentPerson.nameEn || currentPerson.nameAr);
@@ -253,6 +292,7 @@ export default function AddRelativeForm({
     // Step 1: resolve the other person's id.
     let otherId: string;
     if (mode === "new") {
+      const fam = familyPayload(family);
       const { data: newPerson, error: e1 } = await sb
         .from("people")
         .insert({
@@ -261,8 +301,8 @@ export default function AddRelativeForm({
           gender: meta.gender,
           generation: meta.generation,
           status: "unknown",
-          family_ar: "البطاطي",
-          family_en: "Al-Batati",
+          family_ar: fam.family_ar,
+          family_en: fam.family_en,
         })
         .select("id")
         .single();
@@ -294,6 +334,9 @@ export default function AddRelativeForm({
       setSubmitting(false);
       return;
     }
+    // Primary insert (person + relationship) succeeded — even if the user
+    // bails out of the follow-up linkOthers step, we still need to refresh.
+    dirtyRef.current = true;
     if (e2 && isDuplicateKeyError(e2)) {
       // Surface friendly message but only when this was the *new* path; an
       // editor explicitly picking an existing person and getting "exists"
@@ -337,14 +380,16 @@ export default function AddRelativeForm({
       return;
     }
 
-    router.refresh();
-    onClose();
+    // Successful primary save → guaranteed-fresh reload (router.refresh is
+    // unreliable in Next 16 dev — see comment on closeAndMaybeRefresh above).
+    window.location.reload();
   }
 
   async function submitLinkOthers() {
     if (!linkConfig || !newParentId) {
-      router.refresh();
-      onClose();
+      // No new parent to link — still might have written the primary insert,
+      // so go straight to a full reload to be safe.
+      window.location.reload();
       return;
     }
     setSubmitting(true);
@@ -376,6 +421,10 @@ export default function AddRelativeForm({
         otherId = otherParentId;
       } else if (otherParentMode === "new" && otherParentNewName.trim()) {
         const otherGender: Gender = relativeKey === "father" ? "female" : "male";
+        // The inline-added "other parent" defaults to Al-Batati. The user can
+        // refine via the Edit form afterwards if the other parent is actually
+        // an in-law — keeps the link-others flow uncluttered.
+        const otherFam = familyPayload(locale === "ar" ? "البطاطي" : "Al-Batati");
         const { data: newP, error: e0 } = await sb
           .from("people")
           .insert({
@@ -383,8 +432,8 @@ export default function AddRelativeForm({
             gender: otherGender,
             generation: meta.generation,
             status: "unknown",
-            family_ar: "البطاطي",
-            family_en: "Al-Batati",
+            family_ar: otherFam.family_ar,
+            family_en: otherFam.family_en,
           })
           .select("id")
           .single();
@@ -416,8 +465,9 @@ export default function AddRelativeForm({
       await sb.from("relationships").insert(toInsert);
     }
 
-    router.refresh();
-    onClose();
+    // linkOthers complete → reload to guarantee the new links are visible
+    // (and to refresh client-side `relationships` so future dedup works).
+    window.location.reload();
   }
 
   function isDuplicateKeyError(err: { code?: string; message?: string }): boolean {
@@ -433,7 +483,7 @@ export default function AddRelativeForm({
   return (
     <div
       className="fixed inset-0 z-50 grid place-items-center bg-black/40 px-4"
-      onClick={onClose}
+      onClick={closeAndMaybeRefresh}
       role="dialog"
       aria-modal="true"
     >
@@ -476,7 +526,7 @@ export default function AddRelativeForm({
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={closeAndMaybeRefresh}
             className="grid h-8 w-8 place-items-center rounded-full text-sand-600 hover:bg-sand-100"
             aria-label={dict.close}
           >
@@ -691,6 +741,24 @@ export default function AddRelativeForm({
                 className="mt-1 w-full rounded-xl border border-sand-200 bg-white px-3 py-2 text-sm text-sand-900 outline-none focus:border-sand-400 focus:ring-2 focus:ring-sand-200 disabled:bg-sand-50"
               />
             </label>
+            <label className="block">
+              <span className="text-xs font-medium text-sand-700">
+                {locale === "ar" ? "اسم العائلة" : "Family name"}
+              </span>
+              <input
+                type="text"
+                value={family}
+                onChange={(e) => setFamily(e.target.value)}
+                placeholder={locale === "ar" ? "البطاطي" : "Al-Batati"}
+                disabled={submitting}
+                className="mt-1 w-full rounded-xl border border-sand-200 bg-white px-3 py-2 text-sm text-sand-900 outline-none focus:border-sand-400 focus:ring-2 focus:ring-sand-200 disabled:bg-sand-50"
+              />
+              <span className="mt-1 block text-[10px] text-sand-500">
+                {locale === "ar"
+                  ? "الافتراضي «البطاطي». غيّره إذا كان نسيبًا/صهرًا من عائلة أخرى."
+                  : "Defaults to Al-Batati. Override for in-laws from another family."}
+              </span>
+            </label>
           </div>
         ) : (
           <div className="mt-4">
@@ -772,7 +840,7 @@ export default function AddRelativeForm({
           {step === "linkOthers" && (
             <button
               type="button"
-              onClick={() => { router.refresh(); onClose(); }}
+              onClick={() => { window.location.reload(); }}
               disabled={submitting}
               className="rounded-full border border-sand-200 bg-white px-4 py-2 text-sm text-sand-700 hover:bg-sand-100 disabled:opacity-50"
             >
@@ -782,7 +850,7 @@ export default function AddRelativeForm({
           {step === "primary" && (
             <button
               type="button"
-              onClick={onClose}
+              onClick={closeAndMaybeRefresh}
               disabled={submitting}
               className="rounded-full border border-sand-200 bg-white px-4 py-2 text-sm text-sand-700 hover:bg-sand-100 disabled:opacity-50"
             >

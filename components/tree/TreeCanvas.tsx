@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import type { Person, Relationship, TreeLayer } from "@/lib/types";
 import { RELATIONSHIP_STYLE } from "@/lib/types";
 import { computeRelationshipsFor, siblingOrderCompare, styleForRel, type RelationshipEntry } from "@/lib/relationships";
@@ -12,6 +13,8 @@ import ViewModeToggle, { type ViewMode } from "./ViewModeToggle";
 import TreeSearch from "./TreeSearch";
 import FocusFilters, { DEFAULT_FOCUS_FILTERS, type FocusFilterState, type FocusFilterKey } from "./FocusFilters";
 import AddRelativeForm from "./AddRelativeForm";
+import AddPersonForm from "./AddPersonForm";
+import DescendantsView from "./DescendantsView";
 import { getRelationshipIcon, PlusIcon } from "@/components/icons";
 
 type RelativeKey =
@@ -39,7 +42,7 @@ type Dict = {
       females: string;
     };
   };
-  views: { tree: string; focus: string; layers: string; focusEmpty: string };
+  views: { tree: string; focus: string; descendants: string; layers: string; focusEmpty: string };
   search: { placeholder: string; noResults: string; results: string };
   actions: { expandAll: string; collapseAll: string; focusOn: string };
   relations: Record<string, string>;
@@ -90,6 +93,12 @@ type Props = {
   relationships: Relationship[];
   locale: "ar" | "en";
   isEditor: boolean;
+  /** Authenticated non-editor: can submit proposed edits to the moderation
+   *  queue instead of writing directly to the DB. */
+  canSuggest?: boolean;
+  /** auth.users.id of the signed-in viewer, used as `submitted_by` when
+   *  routing edits through `pending_edits`. Null for anonymous viewers. */
+  userId?: string | null;
   treeDict: Dict;
   personDict: {
     profile: string;
@@ -115,7 +124,13 @@ function personLayer(p: Person): TreeLayer {
   return p.gender === "male" ? "men" : "women";
 }
 
-export default function TreeCanvas({ people, relationships, locale, isEditor, treeDict, personDict }: Props) {
+export default function TreeCanvas({ people, relationships, locale, isEditor, canSuggest = false, userId = null, treeDict, personDict }: Props) {
+  // For now we surface only the editor-direct-write flow; non-editor pending
+  // submission is routed via dedicated suggest buttons (see PersonProfile)
+  // and the admin queue page. These two props are passed downward to the
+  // profile so the "suggest" path can find the submitter id.
+  void canSuggest; void userId;
+  const router = useRouter();
   const [viewMode, setViewMode] = useState<ViewMode>("tree");
   const [active, setActive] = useState<Record<TreeLayer, boolean>>({
     men: true, women: true, spouses: true, milk: true, extended: true,
@@ -124,7 +139,43 @@ export default function TreeCanvas({ people, relationships, locale, isEditor, tr
   const [search, setSearch] = useState("");
   const [focusFilters, setFocusFilters] = useState<FocusFilterState>(DEFAULT_FOCUS_FILTERS);
   const [pendingAdd, setPendingAdd] = useState<RelativeKey | null>(null);
+  const [showAddPerson, setShowAddPerson] = useState(false);
   const toggleFocus = (k: FocusFilterKey) => setFocusFilters((s) => ({ ...s, [k]: !s[k] }));
+
+  // URL persistence — survives `window.location.reload()` after a save so the
+  // editor lands back on the same person + view mode instead of being kicked
+  // out to the default tree.
+  //   ?p=<personId>&view=<focus|descendants|layers>
+  // Default tree view + no selection writes nothing to the URL (keeps it clean).
+  // `urlRestored.current` blocks the writer-effect from firing on the first
+  // render — that initial run would otherwise wipe the URL before the reader
+  // effect has had a chance to seed state from it.
+  const urlRestored = useRef(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const p = params.get("p");
+    if (p) setSelectedId(p);
+    const v = params.get("view");
+    if (v === "focus" || v === "descendants" || v === "layers") setViewMode(v as ViewMode);
+    urlRestored.current = true;
+  }, []);
+  useEffect(() => {
+    if (!urlRestored.current) return;
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (selectedId) params.set("p", selectedId);
+    else params.delete("p");
+    if (viewMode !== "tree") params.set("view", viewMode);
+    else params.delete("view");
+    const qs = params.toString();
+    const newUrl = qs ? `${window.location.pathname}?${qs}` : window.location.pathname;
+    if (window.location.pathname + window.location.search !== newUrl) {
+      // Use the History API directly (not router.replace) so we don't trigger
+      // a route re-fetch — we're only updating the URL bar for restore-on-reload.
+      window.history.replaceState(null, "", newUrl);
+    }
+  }, [selectedId, viewMode]);
 
   const toggle = (k: TreeLayer) => setActive((s) => ({ ...s, [k]: !s[k] }));
 
@@ -172,14 +223,28 @@ export default function TreeCanvas({ people, relationships, locale, isEditor, tr
 
   return (
     <div className="space-y-6">
-      {/* Top controls: view toggle + search */}
+      {/* Top controls: view toggle + add-person + search */}
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <ViewModeToggle
-          mode={viewMode}
-          onChange={setViewMode}
-          labels={treeDict.views}
-          focusDisabled={!selected}
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          <ViewModeToggle
+            mode={viewMode}
+            onChange={setViewMode}
+            labels={treeDict.views}
+            focusDisabled={!selected}
+            descendantsDisabled={!selected}
+          />
+          {isEditor && (
+            <button
+              type="button"
+              onClick={() => setShowAddPerson(true)}
+              className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-800 shadow-soft hover:bg-emerald-100"
+              title={locale === "ar" ? "إضافة شخص جديد دون ربطه بأحد" : "Add a new person with no relation"}
+            >
+              <PlusIcon className="h-3.5 w-3.5" />
+              <span>{locale === "ar" ? "إضافة شخص" : "Add person"}</span>
+            </button>
+          )}
+        </div>
         <TreeSearch
           value={search}
           onChange={setSearch}
@@ -189,6 +254,13 @@ export default function TreeCanvas({ people, relationships, locale, isEditor, tr
           noResultsLabel={treeDict.search.noResults}
         />
       </div>
+
+      {showAddPerson && (
+        <AddPersonForm
+          locale={locale}
+          onClose={() => setShowAddPerson(false)}
+        />
+      )}
 
       {/* Layered-view chrome: layer toggles only shown in layers mode */}
       {viewMode === "layers" && (
@@ -230,6 +302,20 @@ export default function TreeCanvas({ people, relationships, locale, isEditor, tr
             placeholderSpouse={treeDict.add.placeholderSpouse}
             onSelect={setSelectedId}
             onRequestAdd={setPendingAdd}
+          />
+        ) : (
+          <EmptyFocus message={treeDict.views.focusEmpty} />
+        )
+      )}
+
+      {viewMode === "descendants" && (
+        selected ? (
+          <DescendantsView
+            center={selected}
+            people={people}
+            relationships={relationships}
+            locale={locale}
+            onSelect={setSelectedId}
           />
         ) : (
           <EmptyFocus message={treeDict.views.focusEmpty} />
@@ -296,7 +382,7 @@ export default function TreeCanvas({ people, relationships, locale, isEditor, tr
             skip: treeDict.add.skip,
             linkStep: treeDict.add.linkStep,
           }}
-          onClose={() => setPendingAdd(null)}
+          onClose={() => { setPendingAdd(null); router.refresh(); }}
         />
       )}
     </div>

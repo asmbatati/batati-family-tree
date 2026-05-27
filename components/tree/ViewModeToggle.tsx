@@ -2,20 +2,22 @@
 
 import { TreeIcon, FocusIcon, LayersIcon } from "@/components/icons";
 
-export type ViewMode = "tree" | "focus" | "layers";
+export type ViewMode = "tree" | "focus" | "descendants" | "layers";
 
 type Props = {
   mode: ViewMode;
   onChange: (m: ViewMode) => void;
-  labels: { tree: string; focus: string; layers: string };
+  labels: { tree: string; focus: string; descendants: string; layers: string };
   focusDisabled?: boolean;
+  descendantsDisabled?: boolean;
 };
 
-export default function ViewModeToggle({ mode, onChange, labels, focusDisabled }: Props) {
+export default function ViewModeToggle({ mode, onChange, labels, focusDisabled, descendantsDisabled }: Props) {
   const items: { key: ViewMode; label: string; icon: React.ReactNode; disabled?: boolean }[] = [
-    { key: "tree",   label: labels.tree,   icon: <TreeIcon className="h-4 w-4" /> },
-    { key: "focus",  label: labels.focus,  icon: <FocusIcon className="h-4 w-4" />, disabled: focusDisabled },
-    { key: "layers", label: labels.layers, icon: <LayersIcon className="h-4 w-4" /> },
+    { key: "tree",        label: labels.tree,        icon: <TreeIcon className="h-4 w-4" /> },
+    { key: "focus",       label: labels.focus,       icon: <FocusIcon className="h-4 w-4" />, disabled: focusDisabled },
+    { key: "descendants", label: labels.descendants, icon: <TreeIcon className="h-4 w-4 rotate-180" />, disabled: descendantsDisabled },
+    { key: "layers",      label: labels.layers,      icon: <LayersIcon className="h-4 w-4" /> },
   ];
   return (
     <div className="inline-flex items-center gap-1 rounded-full border border-sand-200 bg-white/80 p-1 shadow-soft">

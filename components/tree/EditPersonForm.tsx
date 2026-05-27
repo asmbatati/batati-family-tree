@@ -51,6 +51,10 @@ type Props = {
   locale: "ar" | "en";
   dict: Dict;
   onClose: () => void;
+  /** Called after the person row is deleted from the DB. Parent should clear
+   *  any selection/state that references this person (e.g. close the side
+   *  panel). Refresh + form close happen inside EditPersonForm. */
+  onDeleted?: () => void;
 };
 
 type FormState = {
@@ -136,10 +140,11 @@ function toPayload(s: FormState) {
   };
 }
 
-export default function EditPersonForm({ person, locale, dict, onClose }: Props) {
+export default function EditPersonForm({ person, locale, dict, onClose, onDeleted }: Props) {
   const router = useRouter();
   const [state, setState] = useState<FormState>(() => fromPerson(person));
   const [submitting, setSubmitting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -177,8 +182,42 @@ export default function EditPersonForm({ person, locale, dict, onClose }: Props)
       return;
     }
 
-    router.refresh();
-    onClose();
+    // router.refresh() is unreliable in Next 16 dev — full reload guarantees
+    // the edited fields show up in the tree + side panel immediately.
+    window.location.reload();
+  }
+
+  async function handleDelete() {
+    const ar = locale === "ar";
+    const name = ar ? person.nameAr : (person.nameEn || person.nameAr);
+    const ok = window.confirm(
+      ar
+        ? `حذف "${name}" نهائياً؟\nسيتم حذف الشخص وجميع روابطه (الأبناء/الأزواج/الإخوة...) ولا يمكن التراجع عن هذا الإجراء.`
+        : `Delete "${name}" permanently?\nThis will remove the person and all their relationships (children/spouses/siblings…). This cannot be undone.`,
+    );
+    if (!ok) return;
+
+    setError(null);
+    setDeleting(true);
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    if (!url || !key) {
+      setError("Supabase not configured.");
+      setDeleting(false);
+      return;
+    }
+    const sb = createBrowserClient(url, key);
+    // FKs on `relationships.from_id` / `to_id` are ON DELETE CASCADE, so this
+    // single delete also clears every relationship row referencing the person.
+    const { error: err } = await sb.from("people").delete().eq("id", person.id);
+    if (err) {
+      setError(`${dict.saveError}: ${err.message}`);
+      setDeleting(false);
+      return;
+    }
+    // Full reload — same reasoning as the save path. Loses the side-panel
+    // selection (which is correct, since the selected person no longer exists).
+    window.location.reload();
   }
 
   const inputCls =
@@ -319,22 +358,35 @@ export default function EditPersonForm({ person, locale, dict, onClose }: Props)
           )}
         </div>
 
-        <div className="flex justify-end gap-2 border-t border-sand-100 px-6 py-3">
+        <div className="flex items-center justify-between gap-2 border-t border-sand-100 px-6 py-3">
           <button
             type="button"
-            onClick={onClose}
-            disabled={submitting}
-            className="rounded-full border border-sand-200 bg-white px-4 py-2 text-sm text-sand-700 hover:bg-sand-100 disabled:opacity-50"
+            onClick={handleDelete}
+            disabled={submitting || deleting}
+            className="rounded-full border border-rose-300 bg-rose-50 px-4 py-2 text-sm font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-50"
+            title={locale === "ar" ? "حذف الشخص نهائياً" : "Permanently delete this person"}
           >
-            {dict.cancel}
+            {deleting
+              ? (locale === "ar" ? "جارٍ الحذف..." : "Deleting…")
+              : (locale === "ar" ? "حذف الشخص" : "Delete person")}
           </button>
-          <button
-            type="submit"
-            disabled={submitting || !state.name_ar.trim()}
-            className="rounded-full bg-sand-700 px-4 py-2 text-sm font-medium text-white shadow-soft hover:bg-sand-800 disabled:cursor-not-allowed disabled:bg-sand-300"
-          >
-            {submitting ? dict.saving : dict.save}
-          </button>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={submitting || deleting}
+              className="rounded-full border border-sand-200 bg-white px-4 py-2 text-sm text-sand-700 hover:bg-sand-100 disabled:opacity-50"
+            >
+              {dict.cancel}
+            </button>
+            <button
+              type="submit"
+              disabled={submitting || deleting || !state.name_ar.trim()}
+              className="rounded-full bg-sand-700 px-4 py-2 text-sm font-medium text-white shadow-soft hover:bg-sand-800 disabled:cursor-not-allowed disabled:bg-sand-300"
+            >
+              {submitting ? dict.saving : dict.save}
+            </button>
+          </div>
         </div>
       </form>
     </div>

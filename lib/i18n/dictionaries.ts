@@ -35,6 +35,7 @@ export type Dictionary = {
     views: {
       tree: string;
       focus: string;
+      descendants: string;
       layers: string;
       focusEmpty: string;
     };
@@ -294,6 +295,7 @@ const ar: Dictionary = {
     views: {
       tree: "شجرة",
       focus: "تركيز",
+      descendants: "الذرية",
       layers: "بطبقات",
       focusEmpty: "اختر شخصاً من الشجرة لعرض روابطه."
     },
@@ -561,6 +563,7 @@ const en: Dictionary = {
     views: {
       tree: "Tree",
       focus: "Focus",
+      descendants: "Descendants",
       layers: "Layers",
       focusEmpty: "Pick a person from the tree to see their relationships."
     },

@@ -21,6 +21,17 @@ type Maps = {
   parentOf: Map<string, string>; // childId -> parentId
 };
 
+const PRIMARY_FAMILY = "البطاطي";
+
+function familyKey(p: Person, locale: "ar" | "en"): string {
+  const fam = (locale === "ar" ? p.familyAr : (p.familyEn || p.familyAr))?.trim();
+  if (fam) return fam;
+  // Fall back to Arabic family if we're rendering English but only Arabic exists.
+  const fallback = p.familyAr?.trim();
+  if (fallback) return fallback;
+  return locale === "ar" ? "غير محدد" : "Unspecified";
+}
+
 function buildMaps(people: Person[], relationships: Relationship[]): Maps {
   const byId = new Map(people.map((p) => [p.id, p]));
   const visible = new Set(byId.keys());
@@ -61,48 +72,88 @@ export default function CollapsibleTree({
   searchQuery,
   onSelect,
 }: Props) {
-  const maps = useMemo(() => buildMaps(people, relationships), [people, relationships]);
+  // Group by family name. The primary family (البطاطي) always renders first;
+  // other families follow in descending count order. Each family has its own
+  // window/section and only sees parent_of edges that stay inside that family
+  // — so an in-law mother whose children carry the husband's surname doesn't
+  // pull her children's branch into her family's window.
+  const familyGroups = useMemo(() => {
+    const map = new Map<string, Person[]>();
+    for (const p of people) {
+      const fam = familyKey(p, locale);
+      const list = map.get(fam);
+      if (list) list.push(p);
+      else map.set(fam, [p]);
+    }
+    return [...map.entries()].sort((a, b) => {
+      // Always put البطاطي / Al-Batati first regardless of count.
+      const aPrimary = a[0] === PRIMARY_FAMILY || a[0].toLowerCase() === "al-batati";
+      const bPrimary = b[0] === PRIMARY_FAMILY || b[0].toLowerCase() === "al-batati";
+      if (aPrimary && !bPrimary) return -1;
+      if (bPrimary && !aPrimary) return 1;
+      return b[1].length - a[1].length;
+    });
+  }, [people, locale]);
 
-  // Default-expanded set: just the roots and their direct children (depth ≤ 1).
+  // Per-family Maps. Each family's `buildMaps` only sees its own members, so
+  // cross-family parent_of edges are ignored and intra-family hierarchy stays
+  // intact.
+  const familyMaps = useMemo(() => {
+    const m = new Map<string, Maps>();
+    for (const [fam, members] of familyGroups) {
+      m.set(fam, buildMaps(members, relationships));
+    }
+    return m;
+  }, [familyGroups, relationships]);
+
+  // Default-expanded set: all family roots (so each family's top level is
+  // visible the moment its window is opened).
   const initialExpanded = useMemo(() => {
     const s = new Set<string>();
-    for (const r of maps.roots) s.add(r.id);
+    for (const fmaps of familyMaps.values()) {
+      for (const r of fmaps.roots) s.add(r.id);
+    }
     return s;
-  }, [maps.roots]);
+  }, [familyMaps]);
 
   const [expanded, setExpanded] = useState<Set<string>>(initialExpanded);
 
   // Compute the set of ids that should be expanded to reveal a search match.
-  // Each matching person's full ancestor chain is added to `expanded`.
-  const matchedIds = useMemo(() => {
+  // Each matching person's full ancestor chain (within their family) is added.
+  const { matchedIds, matchedFamilies } = useMemo(() => {
     const q = searchQuery.trim();
-    if (!q) return null;
+    if (!q) return { matchedIds: null as Set<string> | null, matchedFamilies: new Set<string>() };
     const lower = q.toLowerCase();
-    const matches = new Set<string>();
+    const ids = new Set<string>();
+    const fams = new Set<string>();
     for (const p of people) {
       const nameAr = p.nameAr || "";
       const nameEn = p.nameEn || "";
       if (nameAr.includes(q) || nameEn.toLowerCase().includes(lower)) {
-        matches.add(p.id);
+        ids.add(p.id);
+        fams.add(familyKey(p, locale));
       }
     }
-    return matches;
-  }, [searchQuery, people]);
+    return { matchedIds: ids, matchedFamilies: fams };
+  }, [searchQuery, people, locale]);
 
   useEffect(() => {
     if (!matchedIds || matchedIds.size === 0) return;
     setExpanded((prev) => {
       const next = new Set(prev);
+      // Walk ancestor chain in every family map (a match belongs to one family).
       for (const id of matchedIds) {
-        let cur: string | undefined = maps.parentOf.get(id);
-        while (cur) {
-          next.add(cur);
-          cur = maps.parentOf.get(cur);
+        for (const fmaps of familyMaps.values()) {
+          let cur: string | undefined = fmaps.parentOf.get(id);
+          while (cur) {
+            next.add(cur);
+            cur = fmaps.parentOf.get(cur);
+          }
         }
       }
       return next;
     });
-  }, [matchedIds, maps.parentOf]);
+  }, [matchedIds, familyMaps]);
 
   const toggle = (id: string) =>
     setExpanded((prev) => {
@@ -114,17 +165,38 @@ export default function CollapsibleTree({
 
   const expandAll = () => {
     const all = new Set<string>();
-    for (const p of people) if ((maps.children.get(p.id) ?? []).length > 0) all.add(p.id);
+    for (const fmaps of familyMaps.values()) {
+      for (const id of fmaps.byId.keys()) {
+        if ((fmaps.children.get(id) ?? []).length > 0) all.add(id);
+      }
+    }
     setExpanded(all);
   };
+  const collapseAll = () => {
+    const s = new Set<string>();
+    for (const fmaps of familyMaps.values()) for (const r of fmaps.roots) s.add(r.id);
+    setExpanded(s);
+  };
 
-  const collapseAll = () => setExpanded(new Set(maps.roots.map((r) => r.id)));
+  // Family window open/close state. Defaults: the first family (always البطاطي
+  // when present, otherwise the largest) is open; everything else closed. The
+  // user's manual toggles override these defaults; a search match force-opens
+  // every family that contains a match.
+  const [familyOverride, setFamilyOverride] = useState<Record<string, boolean>>({});
+  const isFamilyOpen = (family: string, index: number): boolean => {
+    if (matchedFamilies.has(family)) return true;
+    if (family in familyOverride) return familyOverride[family];
+    return index === 0;
+  };
 
+  const total = people.length;
   return (
-    <div className="overflow-hidden rounded-3xl border border-sand-200 bg-white/70 shadow-soft">
-      <div className="flex items-center justify-between border-b border-sand-100 px-4 py-2 text-xs text-sand-600">
+    <div className="space-y-3">
+      <div className="flex items-center justify-between rounded-2xl border border-sand-200 bg-white/70 px-4 py-2 text-xs text-sand-600 shadow-soft">
         <span>
-          {people.length.toLocaleString(locale === "ar" ? "ar-EG" : "en-US")} ·{" "}
+          {total.toLocaleString(locale === "ar" ? "ar-EG" : "en-US")} ·{" "}
+          {familyGroups.length}{" "}
+          {locale === "ar" ? "عائلة" : familyGroups.length === 1 ? "family" : "families"} ·{" "}
           {locale === "ar" ? "اضغط على السهم للتوسيع، وعلى الاسم لفتح البروفايل" : "Click ▾ to expand, name to open profile"}
         </span>
         <div className="flex gap-2">
@@ -136,22 +208,82 @@ export default function CollapsibleTree({
           </button>
         </div>
       </div>
-      <div className="max-h-[70vh] overflow-y-auto px-2 py-3 sm:px-4">
-        {maps.roots.map((root) => (
-          <TreeNode
-            key={root.id}
-            person={root}
-            depth={0}
-            maps={maps}
-            expanded={expanded}
-            toggle={toggle}
-            locale={locale}
-            selectedId={selectedId}
-            matchedIds={matchedIds}
-            onSelect={onSelect}
-          />
-        ))}
-      </div>
+
+      {familyGroups.map(([family, members], index) => {
+        const fmaps = familyMaps.get(family);
+        if (!fmaps) return null;
+        const open = isFamilyOpen(family, index);
+        const isPrimary = family === PRIMARY_FAMILY || family.toLowerCase() === "al-batati";
+        return (
+          <details
+            key={family}
+            open={open}
+            onToggle={(e) => {
+              const nowOpen = e.currentTarget.open;
+              // If the open state agrees with the default, drop the override
+              // (keeps the state object small + lets the default kick back in).
+              setFamilyOverride((prev) => ({ ...prev, [family]: nowOpen }));
+            }}
+            className={
+              "group overflow-hidden rounded-3xl border bg-white/70 shadow-soft " +
+              (isPrimary ? "border-sand-300" : "border-sand-200")
+            }
+          >
+            <summary
+              className={
+                "flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 transition " +
+                (isPrimary ? "bg-sand-100/60" : "bg-white/70 hover:bg-sand-50")
+              }
+            >
+              <div className="flex items-center gap-2">
+                <ChevronIcon
+                  className={
+                    "h-4 w-4 shrink-0 text-sand-500 transition-transform " +
+                    (open ? "" : locale === "ar" ? "rotate-90" : "-rotate-90")
+                  }
+                />
+                <span className={"font-display " + (isPrimary ? "text-base text-sand-900" : "text-sm text-sand-800")}>
+                  {family}
+                </span>
+                {isPrimary && (
+                  <span className="rounded-full bg-sand-700 px-2 py-0.5 text-[10px] font-medium text-white">
+                    {locale === "ar" ? "العائلة الرئيسية" : "primary"}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2 text-[11px] tabular-nums text-sand-600">
+                <span>{members.length.toLocaleString(locale === "ar" ? "ar-EG" : "en-US")}</span>
+                <span className="text-sand-400">·</span>
+                <span>
+                  {fmaps.roots.length} {locale === "ar" ? "جذور" : fmaps.roots.length === 1 ? "root" : "roots"}
+                </span>
+              </div>
+            </summary>
+            <div className="max-h-[60vh] overflow-y-auto border-t border-sand-100 px-2 py-3 sm:px-4">
+              {fmaps.roots.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-sand-200 p-4 text-center text-xs text-sand-500">
+                  {locale === "ar" ? "لا يوجد أفراد في هذه العائلة." : "No members in this family."}
+                </div>
+              ) : (
+                fmaps.roots.map((root) => (
+                  <TreeNode
+                    key={root.id}
+                    person={root}
+                    depth={0}
+                    maps={fmaps}
+                    expanded={expanded}
+                    toggle={toggle}
+                    locale={locale}
+                    selectedId={selectedId}
+                    matchedIds={matchedIds}
+                    onSelect={onSelect}
+                  />
+                ))
+              )}
+            </div>
+          </details>
+        );
+      })}
     </div>
   );
 }

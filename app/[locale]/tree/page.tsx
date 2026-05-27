@@ -2,8 +2,18 @@ import { notFound } from "next/navigation";
 import { getDictionary } from "@/lib/i18n/dictionaries";
 import { isLocale, type Locale } from "@/lib/i18n/config";
 import { loadTree } from "@/lib/data/loadTree";
-import { isEditor } from "@/lib/auth";
+import { getViewerContext } from "@/lib/auth";
 import TreeCanvas from "@/components/tree/TreeCanvas";
+
+// Force this route to always render dynamically — never cache the SSR'd output.
+// Reason: editors add/edit/delete people and relationships from the client, then
+// call `router.refresh()` to re-pull. If Next caches the rendered page (which it
+// can do opportunistically even when `cookies()` is used elsewhere in the
+// component tree), `router.refresh()` won't actually re-execute `loadTree`, and
+// the editor's mutations appear "to not work" — they're in the DB but the tree
+// keeps showing the pre-mutation snapshot.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export default async function TreePage({ params }: { params: Promise<{ locale: string }> }) {
   const { locale: rawLocale } = await params;
@@ -11,9 +21,9 @@ export default async function TreePage({ params }: { params: Promise<{ locale: s
   const locale = rawLocale as Locale;
   const t = getDictionary(locale);
 
-  const editor = await isEditor();
+  const viewer = await getViewerContext();
   const { people, relationships } = await loadTree({
-    maskFemaleAs: editor ? null : t.tree.redactedFemale,
+    maskFemaleAs: viewer.isEditor ? null : t.tree.redactedFemale,
   });
 
   return (
@@ -27,7 +37,9 @@ export default async function TreePage({ params }: { params: Promise<{ locale: s
         people={people}
         relationships={relationships}
         locale={locale}
-        isEditor={editor}
+        isEditor={viewer.isEditor}
+        canSuggest={viewer.canSuggest}
+        userId={viewer.user?.id ?? null}
         treeDict={{
           layers: t.tree.layers,
           focus: t.tree.focus,

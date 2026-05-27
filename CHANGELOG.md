@@ -7,7 +7,174 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ---
 
-## [Unreleased] — 2026-05-25
+## [Unreleased] — 2026-05-27
+
+### Added — Persist selected person + view mode in the URL (survives reload)
+- **Why**: after the previous fix changed AddRelative/Edit/AddPerson forms to do `window.location.reload()` for guaranteed-fresh data, the editor lost their context — `selectedId` and `viewMode` are `useState` and reset on reload, so a save would dump them back to the default tree view and force them to click their way back to the focused person.
+- **Fix** ([components/tree/TreeCanvas.tsx](components/tree/TreeCanvas.tsx)): two `useEffect`s drive a `?p=<id>&view=<mode>` query-string for the tree page. On mount, the restore effect reads search params and seeds `selectedId` + `viewMode`. On subsequent state changes, a writer effect updates the URL via `window.history.replaceState` (no router fetch). A `urlRestored` ref blocks the writer from running before the restorer has finished, so the URL doesn't get wiped on initial render.
+- Default values are omitted from the URL (no `p=`, no `view=tree`) so the bar stays clean when nothing is selected.
+- Using the History API directly instead of `router.replace` means no RSC re-fetch, no router-cache changes — purely a cosmetic URL-bar update.
+- **Effect on the reload flow**: editor adds/edits → reload fires → page reload preserves the URL → mount effect reads `?p=…&view=focus` → state restored → page shows the same focused person with the new relationship now visible.
+- User prompt: *"When I add a relation, it gets saved successfuly now. But after saving it sends me to the tree page and I have to navigate again to the focused view of that person which is daunting"*
+
+### Fixed — Paginate loadTree past PostgREST's 1000-row default cap
+- **Root cause**: PostgREST (and therefore the Supabase REST client) caps a single response at 1000 rows by default. The Al-Batati DB has ~695 `people` rows plus hundreds of `parent_of` / `spouse_of` / `sibling_of` / `milk_sibling_of` rows — easily over 1000 relationships. `loadTree()`'s `.select("*")` was silently returning only the first 1000 relationships ordered by PostgREST's internal sort; rows past the cap were dropped on the floor. The user's freshly-added `spouse_of(أحمد ↔ سميرة)` row was one of the dropped ones, which is why the focus view kept showing no spouse even though the DB had the row.
+- **Fix** ([lib/data/loadTree.ts](lib/data/loadTree.ts)): introduce a `fetchAll<T>(sb, table, orderColumn?)` helper that pages through the table via `.range(offset, offset + 999)` calls until the page returns fewer rows than the limit. Both `people` and `relationships` use it now. Safety stop at 200,000 rows to prevent a pager bug from looping forever.
+- Adds typed PeopleRow / RelRow row shapes inline so the helper is type-safe.
+- **Why the side panel only showed 14** for أحمد: the 14 were whatever rows out of the first 1000 happened to involve أحمد. The spouse_of row was past the 1000 cutoff, so it never reached `computeRelationshipsFor`.
+- User prompt: *"I still can not see her in the focused view!"* — followed by SQL queries confirming سميرة exists and the spouse_of row exists, but the side panel relationships list of 14 didn't include her.
+
+### Fixed — Stale client snapshot caused phantom "edits don't apply" + 409 duplicates
+- **Root cause**: `router.refresh()` is unreliable in our Next 16 dev environment — it intermittently no-ops, leaving the client's `relationships` snapshot stale. Stale snapshot → the form's client-side `isDup` check (built from the loaded `relationships` array) misses rows that exist in the DB → form re-attempts inserts that the DB then rejects with `409 Conflict / 23505 duplicate key`. The form swallows the duplicate as "no change" and shows nothing → editor concludes "the addition does not happen".
+- **Diagnosis from the user's HAR log**: after the first run added سميرة as spouse and linked her to 3 children successfully (the writes ARE in the DB), every subsequent attempt at the same flow hit a sequence of 409s — `spouse_of(c9351969↔5df04048)` + a batch of 3 `parent_of(5df04048→{children})`. The writes never produced new rows; they were trying to re-add what was already there.
+- **Fix**: replace `router.refresh()` with `window.location.reload()` in every form's *success* path ([components/tree/AddRelativeForm.tsx](components/tree/AddRelativeForm.tsx), [components/tree/AddPersonForm.tsx](components/tree/AddPersonForm.tsx), [components/tree/EditPersonForm.tsx](components/tree/EditPersonForm.tsx)). Cancel/X paths still just call `onClose()` so there's no reload when nothing was written. The trade-off is the side panel's `selectedId` resets after each save — acceptable because the editor lands on a guaranteed-fresh snapshot.
+- **`closeAndMaybeRefresh`** in AddRelativeForm now also reloads when `dirtyRef` is true (i.e. user reached the linkOthers step then X'd out). Previously it called `router.refresh()` which silently no-op'd, leaving the user staring at a stale tree.
+- TreeCanvas's `onClose` is unchanged — still just `setPendingAdd(null) + router.refresh()`. Reload is owned by the forms now, so cancelling a form doesn't trigger a reload.
+- User prompt: *"I do not see the welcome modal and I do not see the addition neither in the tree nor in the review!"* + follow-up Network log showing 201s on inserts then 409s on retries.
+
+### Fixed — WelcomeClaim modal was masking add-relation results
+- **Bug**: after introducing the WelcomeClaim modal in the locale layout, the modal would re-mount on every `router.refresh()` (which is called after a successful add/edit) with its internal `open` state defaulting to `true`. Because the modal sits at `z-[70]` — above AddRelativeForm (`z-50`) and EditPersonForm (`z-60`) — it popped over the page right when the freshly-added relation should have become visible. Symptom: "I added several relations but they did not happen".
+- **Fix (1)**: editors are now exempted from the WelcomeClaim modal entirely ([app/[locale]/layout.tsx](app/%5Blocale%5D/layout.tsx)) — they're already authoritative in the editors table and don't need to claim. `showWelcomeClaim = !!viewer.user && !viewer.isEditor && !viewer.claimedPersonId`.
+- **Fix (2)**: dismissal persists across the session ([components/auth/WelcomeClaim.tsx](components/auth/WelcomeClaim.tsx)). The component now starts closed and opens on first mount only if `sessionStorage["batati-welcome-dismissed"]` is not set. Every close path (backdrop click, Escape, X button, "Skip for now", successful link/submit) routes through a `dismiss()` helper that sets the flag. So once a non-editor user dismisses or completes the welcome flow, the modal stays gone for the rest of the session even though `router.refresh()` re-mounts the layout.
+- User prompt: *"The problem has returned, I have added several relations but they did not happen."*
+
+### Added — User claim flow, personal dashboard, moderation queue, event submission
+
+**1. Schema migration** — new file [supabase/user-moderation.sql](supabase/user-moderation.sql). Run AFTER `schema.sql` and `auth.sql`.
+- **`public.user_people`** — links `auth.users.id` → `people.id` so a logged-in user "claims" their place in the tree. RLS: self read/write; editors get read-only.
+- **`public.pending_edits`** — moderation queue. Authenticated non-editors INSERT proposed edits here (`entity_type ∈ {person, relationship, event}`, `operation ∈ {insert, update, delete}`, `payload jsonb`, `original_payload jsonb`, `note`, `status`, `review_note`, `reviewed_by`, `reviewed_at`, `submitted_at`). RLS: submitters insert + read their own; editors can do anything.
+- **`public.events` extended** — added `status` (default 'approved'), `submitted_by`, `reviewed_by`, `reviewed_at` columns. Public read now filtered to `status = 'approved'` (plus submitters see their own + editors see all). Non-editors can insert with `status = 'pending'`.
+
+**2. Auth context** — new `getViewerContext()` in [lib/auth.ts](lib/auth.ts) bundles `{ user, isEditor, claimedPersonId, canSuggest }` into a single round-trip. `canSuggest` is true for any authenticated non-editor → they submit to the queue instead of writing directly.
+
+**3. Welcome / claim modal** — new [components/auth/WelcomeClaim.tsx](components/auth/WelcomeClaim.tsx). Auto-shown by [app/[locale]/layout.tsx](app/%5Blocale%5D/layout.tsx) when `viewer.user && !viewer.claimedPersonId`. Three modes:
+- *Search & link*: lineage-aware fuzzy search; on pick, upserts a `user_people` row. Direct write (allowed by self-RLS).
+- *Submit join request*: a non-editor user can propose adding themselves to the tree. Writes to `pending_edits` (`entity_type = 'person', operation = 'insert'`) with their name + gender. Editor approves later from the moderation queue.
+- *Skip*.
+
+**4. Personal dashboard** — new route [/{locale}/me](app/%5Blocale%5D/me/page.tsx) (force-dynamic). Redirects to `/login` if unauthenticated; to `/` (home + welcome modal) if no claim yet. Shows:
+- Header with claimed person's name + lineage chain + quick links to `/tree` and `/relate`.
+- KPI cards: generation, sibling count, children count, grandchildren count.
+- Four relatives cards: parents, spouse(s), siblings, children.
+- "My pending suggestions" list (the user's own queue with status pills).
+
+**5. Admin moderation queue** — new route [/{locale}/admin/queue](app/%5Blocale%5D/admin/queue/page.tsx) (editors only — non-editors get a 403-style message). Tab filter (`pending` / `approved` / `rejected`) via search params. Each row:
+- Op pill (`insert`/`update`/`delete` × `person`/`relationship`/`event`).
+- Submitter (resolved to their claimed name via `user_people` join).
+- Target (resolved via `people` lookup when `target_id` is set).
+- Submitter note + expandable payload + expandable original payload (diff).
+- Reviewer-note input + **Approve & apply** / **Reject** buttons via new client component [components/admin/QueueActions.tsx](components/admin/QueueActions.tsx). Approve fetches the row, applies the operation to the live table (using the editor's session — RLS allows it), then marks the pending row `approved`. Reject just sets `status = 'rejected'` with the reviewer note.
+
+**6. Event submission flow** — events page rewritten to load from Supabase ([app/[locale]/events/page.tsx](app/%5Blocale%5D/events/page.tsx), force-dynamic, seed fallback when empty). New [components/events/SuggestEventForm.tsx](components/events/SuggestEventForm.tsx) lets authenticated users post events:
+- *Editors*: button label "Post new event", row inserted with `status = 'approved'` (publishes immediately).
+- *Non-editors*: button label "Suggest an event", row inserted with `status = 'pending'`. They see their pending suggestions in a sticky-note section at the top of the events page; everyone else only sees approved events.
+
+**7. Header navigation** — [components/Header.tsx](components/Header.tsx) now uses `getViewerContext()`. Dynamic nav items: `لوحتي / My dashboard` appears when the viewer has claimed a person; `المراجعة / Moderation` appears when the viewer is an editor.
+
+**8. Helper** — [lib/moderation.ts](lib/moderation.ts) — server-side `submitPending`, `applyPendingEdit`, `rejectPendingEdit` (referenced by future admin-side server actions if we want to move QueueActions away from the client).
+
+**9. TreeCanvas Props** — added optional `canSuggest` + `userId`. Passed through from [app/[locale]/tree/page.tsx](app/%5Blocale%5D/tree/page.tsx) using the new viewer context. The forms-route-through-pending change is **deferred** to a follow-up: today's editor-direct flow is unchanged, and non-editor edits go through the WelcomeClaim flow + future per-field "Suggest edit" buttons.
+
+**Migration order to run on production**: `schema.sql` → `auth.sql` → `user-moderation.sql` (each is idempotent). Then `notify pgrst, 'reload schema';`.
+
+User prompt: *"Now I want a feature for the users. 1- When someone logs in, it will ask him his name and he can choose from the search bar his name if it exists, or create a new file and connect it to the family. Then he will see a dashboard about him… 2- He can edit the tree, however, these edits will need approval from my side to take effect. 3- He can post events also that needs approval"*
+
+### Added — "Family name" field at add-time (no more add-then-find-then-edit)
+- **AddPersonForm** ([components/tree/AddPersonForm.tsx](components/tree/AddPersonForm.tsx)) and **AddRelativeForm** ([components/tree/AddRelativeForm.tsx](components/tree/AddRelativeForm.tsx)) now both expose a single locale-aware **Family name** input on the new-person flow. Defaults to the appropriate Al-Batati spelling (`البطاطي` in Arabic UI, `Al-Batati` in English) so the common case is a no-op for the editor — only in-laws need a typed value.
+- **Splitter helper** (`familyPayload(typed)`) is duplicated in both forms (small, kept local). It recognises the canonical Al-Batati spellings (`البطاطي`, `Al-Batati`, `albatati`) and writes the same standard values to both `family_ar` + `family_en`; for any other input it mirrors the typed value to both columns (the editor can refine the cross-locale spelling later via the Edit form).
+- **Inline help text** under the field clarifies the rule: "Defaults to Al-Batati. Override only when the person is from another family (an in-law)."
+- **Other-parent inline add** inside the AddRelativeForm's linkOthers step also routes through the splitter (still defaults to Al-Batati since that flow doesn't have its own family input — the editor can refine via the new person's Edit form afterwards if needed).
+- User prompt: *"when I add a person, I want to see a field for family name, it should default to al-batati, but if it was not al-batati, I have to add, then look for it, then edit to be able to change the family name."*
+
+### Added — Delete person from Edit form
+- **Red "حذف الشخص / Delete person" button in the EditPersonForm footer** ([components/tree/EditPersonForm.tsx](components/tree/EditPersonForm.tsx)) — left-aligned, separated from Cancel/Save on the right. Triggers a localized `window.confirm` that explicitly warns "this will remove the person and all their relationships (children/spouses/siblings…)" before issuing a single `DELETE FROM public.people WHERE id = …` via the browser Supabase client. The `ON DELETE CASCADE` FKs on `relationships.from_id` / `to_id` clean up every related row automatically — no separate relationship delete needed.
+- **New `onDeleted` callback prop** on EditPersonForm. After a successful delete, `router.refresh()` runs, then `onDeleted()` fires, then `onClose()` closes the form.
+- **PersonProfile wires `onDeleted` → its own `onClose`** ([components/tree/PersonProfile.tsx](components/tree/PersonProfile.tsx)) so the side panel closes too. TreeCanvas's existing `setSelectedId(null)` on profile close then clears the focus selection, so the tree settles on a coherent state with no dangling selection.
+- **RLS** — write-delete on `public.people` is gated by the same `editors` policy as updates/inserts, so non-editors can't trigger this even if they hack the UI.
+- **Caveat**: deleting a person who is referenced as a parent in another generation's `parent_of` row will sever that branch (CASCADE drops the relationship). The descendants' `people` rows are NOT deleted — they just become roots in the tree. That's the intended behavior for fixing a mis-added person.
+- User prompt: *"I want to be able to delete a person when I edit the entry"*
+
+### Added — Tree view: family-name windows
+- **Family grouping in CollapsibleTree** ([components/tree/CollapsibleTree.tsx](components/tree/CollapsibleTree.tsx)) — people are now bucketed by `family_ar` (or `family_en` in English mode) into separate collapsible windows. Each window renders its own internal hierarchy. The primary family (البطاطي / Al-Batati) is pinned to the top with a primary badge and is open by default; other families follow in descending member count and are collapsed by default.
+- **Intra-family hierarchy** — `buildMaps` is now called per-family with that family's members only, so it only registers `parent_of` edges that stay inside the family. A wife from family Y married into family X (with children in X) appears as a root in Y's window, while her children appear under her husband in X's window — exactly how the patrilineal record reads.
+- **Search auto-opens windows with matches** — when a search hit is in a non-primary family, that family's `<details>` is force-opened so the highlight isn't hidden. User toggles persist via an override map keyed by family name.
+- **Family header bar** — each window's `<summary>` shows the family name (display font for the primary family), member count, and root count. Primary family has a sand-900 border and "العائلة الرئيسية / primary" pill.
+- **`Expand`/`Collapse` buttons now act across all family windows.**
+- **Tree-page header line** updates to show the family count alongside the people count: "695 · 4 families".
+- User prompt: *"In the tree view, I want to make seperation between families. So all that has similar family name will be under that familty window"*
+
+### Added — Insights: time-machine filter, naming heatmap, peninsula map, deeper consanguinity, click-through pair lists
+- **Time machine** (gen-range slider) — new client component [components/insights/TimeMachine.tsx](components/insights/TimeMachine.tsx). Two range inputs update the URL's `?fromGen=&toGen=` params with a 250ms debounce via `router.replace`. The server route re-runs `computeStats` on the filtered slice while still using the FULL `parentsOf` graph for ancestor lookup — so cousin detection stays correct even when the slider hides the grandparents.
+- **2nd-cousin + great-uncle/aunt marriage detection** ([app/[locale]/insights/page.tsx](app/%5Blocale%5D/insights/page.tsx)) — new `classifyMarriage(a, b, parentsOf)` returns one of `first_cousin | second_cousin | great_uncle | other` by intersecting `ancestorsAtLevel` sets at depths 1/2/3. Each category gets its own pair list (`cousinMarriagePairs`, `secondCousinPairs`, `greatUnclePairs`).
+- **Click-through pair lists** — new `ExpandableSection` (native `<details>` + `<summary>`, no client JS) renders the full pair list under each consanguinity card and under the in-law and milk-sibling cards. So tapping "first cousin marriages: 13" expands into the actual 13 pairs with both names.
+- **Naming heatmap** — new `NamingHeatmap` component renders a top-10-names × generations grid. Cell intensity (`rgba(27,73,101, count/max)`) shows how name popularity shifts across time; cell numbers stay readable via auto white/dark text based on alpha.
+- **Arabian Peninsula map** — new `SaudiMap` component. Stylized SVG outline (single `<path>`) with dots positioned via a static `CITY_COORDS` lookup of ~20 Saudi + Yemen cities (Arabic and English keys both). Cities are detected by exact-match-then-substring on the `location` field. Dot radius scales with `√(count/max)`. Falls back to "no matched location data" when zero rows match.
+- **In-law section** is now both summary (top-10 bar chart) AND expandable pair list — the editor can see every documented marriage with each external family.
+- **Removed the open-web "Heritage references" section** per user feedback: "they all are wrong, I will provide accurate sources later". The structure is gone; will be re-added once authoritative sources are supplied.
+- **`isFiltered` banner** — when the user has the slider away from the full range, a one-line note shows `"Showing stats for generations G3–G6 only (N people of M)"`.
+- **Cousin detection is consistent under filtering** — the `parentsOf` graph is built once from the FULL relationship set before `computeStats` runs on the filtered slice; only the *display* of marriages is restricted to pairs where both spouses are in the filtered set.
+- User prompt: *"Do all of them please. Also remove the 'Open-web sources on the origins and history of the Al-Batati family.' They all are wrong, I will provide you with accurate sources later"*
+
+### Added — Insights page: rich analytics + charts + heritage references
+- **`export const dynamic = "force-dynamic"` + `revalidate = 0`** on the insights route ([app/[locale]/insights/page.tsx](app/%5Blocale%5D/insights/page.tsx)) so the stats always reflect the live DB instead of an opportunistically cached SSR.
+- **`computeStats` massively expanded** — new fields: `topNames` (top 10), `familySizeBuckets`, `inLawFamilies`, `milkSiblingPairs` + `milkSiblingExamples`, `multiSpouseCount` + `multiSpouseTop`, `cousinMarriages`, `statusBreakdown`, `topLocations`, `totalSpouseLinks`, `endogamyRate`. Cousin-marriage detection runs grandparent-set intersection over unique spouse pairs; in-law family counting only fires when exactly one side has `familyAr !== "البطاطي"` (so cousin marriages don't inflate the in-law count). Top dual-name now constrained to patrilineal pairs (parent gender = male) since `X بن Y` is patronymic.
+- **Inline SVG chart components** (no dependencies, no client interactivity needed):
+  - `BarChart` — Tailwind divs, accent color per chart, value label inline.
+  - `GenerationPyramid` — mirrored male/female bars centered on the gen label.
+  - `StatusDonut` — pure SVG (two `<circle>` arcs via `strokeDasharray` + dashoffset) with the total in the middle.
+- **New rendered sections**:
+  - Extended KPI grid — 6 new cards (multi-spouse count, milk-sibling pairs, cousin marriages, in-law families, total marriages, endogamy %).
+  - Generation pyramid.
+  - 3-column row: top 10 names / family-size distribution / status donut.
+  - 2-column row: in-law families bar chart + multi-spouse top-5 list (الصِّهر / الصهور والمصاهرة).
+  - Milk siblings section with examples.
+  - Locations bar chart (only shown when at least one person has a location).
+  - Generation table (preserved).
+  - **Heritage references** — 5 open-web sources on Al-Batati origins, in both `ar` and `en` ordering, rendered as nofollow external links with a caveat note.
+- **Why include external references**: per the user's brief, the analytics surface is "an entrance to the wider family heritage". Online genealogical references (Ashabakah, Wikipedia disambiguation, etc.) give visitors context without claiming to be authoritative — the family historian still owns the source of truth.
+- User prompt: *"Is the insights tab dynamic and changes with each update? Also, I want to enhance it and enrich it with data analytics. Do your best to impress me here with analytics, stats, diagrams, charts, other families in law (الصهور والمصاهرة), milk siblings, ... Also start to look for references online to use for enriching the website"*
+
+### Added — Standalone "Add person" button (no center required)
+- **New component** ([components/tree/AddPersonForm.tsx](components/tree/AddPersonForm.tsx)) — modal that inserts a row into `public.people` with name (Ar required, En optional), gender (male/female toggle), and optional generation + birth year. Does NOT touch the `relationships` table; the editor wires the new person into the tree afterward via the side panel's quick-add buttons.
+- **Button placement** ([components/tree/TreeCanvas.tsx](components/tree/TreeCanvas.tsx)) — emerald-pill "Add person" button beside the view-mode toggle in the top controls row. Editor-only (mirrors the AddRelativeForm gate). Inline locale strings, no new dictionary entries needed.
+- User prompt: *"I want to add (Add person) button without focusing on any person. External button to add"*
+
+### Fixed — Duplicate-key error in DescendantsView for re-reachable descendants
+- **Bug**: when a descendant was reachable through more than one parent line from the center (cousin marriage, or any case where the center is an ancestor of both of a person's parents), the previous `buildTree` placed them twice — once as a fully-expanded node on the first encounter, and once as a leaf on the second (`visited` Set was preventing infinite recursion but not the second placement). React then warned `"Encountered two children with the same key"` and stats double-counted that person.
+- **Fix** ([components/tree/DescendantsView.tsx](components/tree/DescendantsView.tsx)): renamed the guard to `placed`, and on second encounter `recurse` returns `null` instead of an empty-children node. The parent filters `null`s out of its `children` array. Each descendant is now placed exactly once (under whichever parent's branch is traversed first), keys are unique, and stats are correct.
+
+### Added — Descendants view
+- **New view mode** "descendants" in `ViewModeToggle` ([components/tree/ViewModeToggle.tsx](components/tree/ViewModeToggle.tsx)) — fourth tab alongside Tree / Focus / Layers, with a tree-down icon. Disabled until a person is selected (same gating as Focus). Labels: `الذرية` / `Descendants` added to `tree.views` in both locales.
+- **New component** ([components/tree/DescendantsView.tsx](components/tree/DescendantsView.tsx)) — top-down hierarchical tree of every descendant of the center person.
+  - **Layout**: tidy-tree post-order — `subtreeWidth = max(NODE_W + H_GAP, sum of children subtreeWidths)`; parent x is centered between its first and last child. Cycle protection via a `visited` Set so a self-referential `parent_of` row can't infinite-recurse.
+  - **Rendering**: SVG with `foreignObject` HTML buttons for nodes (same color-by-layer styling as PersonNode); 3-segment elbow paths for parent→child edges (green, matching the existing children-relationship color).
+  - **Stats card** (top-start corner, overlaid on the canvas) — total descendants, male count, female count, generation depth. Excludes the center person from counts.
+  - **Zoom** (top-end corner) — `−` / percent label / `+` buttons. Range 25%–300%, 20% increments, percent label resets to 100%. Implemented via SVG `width`/`height` scaling against a fixed `viewBox` so layout coordinates stay stable.
+  - **Scroll viewport**: outer div is `overflow-auto` with `maxHeight: 78vh` so the canvas pans naturally when the tree exceeds the viewport.
+- **Wired into TreeCanvas** ([components/tree/TreeCanvas.tsx](components/tree/TreeCanvas.tsx)) — renders DescendantsView when `viewMode === "descendants"` and a person is selected, otherwise shows the empty-state placeholder.
+- User prompt: *"I want to add a view that is similar to the Focus view, However, it will show all the offspring to a person (children, grand children, till the end) where we can zoom in and out and see all the offspring from a person of interest with a brief stat box in the corner above saying how many male/female offspring"*
+
+### Docs — README updated with live URL, full Supabase setup, deploy guide, and troubleshooting
+- **Live URL surfaced** ([README.md](README.md)): `https://batati-family-tree.vercel.app` at the top of the README.
+- **Stack badges refreshed**: Next 16 + React 19 instead of Next 14 + React 18; added a Vercel hosting note.
+- **Supabase setup section rewritten** with the migration order (`schema.sql` → `dedupe-relationships.sql` → `auth.sql` → optional `seed-tree.sql`) and a `notify pgrst, 'reload schema'` step. Explicitly calls out the publishable vs secret API-key distinction (and to rotate any leaked secret) since a leaked `sb_secret_…` in `NEXT_PUBLIC_…` triggers Supabase's "Forbidden use of secret API key in browser" guardrail.
+- **Vercel deploy section added** with the exact env-var names + scope (Production, Preview, Development) + the redeploy gotcha (Vercel doesn't pick up env-var changes on existing builds).
+- **Auth callback URL section added** — explains both Site URL and Redirect URLs, with wildcard examples (`https://batati-family-tree.vercel.app/**`).
+- **Roadmap updated** — DB writes, auth, 695-person import, relate page, and PDF export are now checked off.
+- **Troubleshooting section added** covering: duplicate relationships → run `dedupe-relationships.sql`; secret API key error → rotate + replace with publishable; editor badge missing → run `editors` INSERT; magic-link error → fix Site/Redirect URLs; tree not refreshing → `force-dynamic` requirement.
+- User prompt: *"yes, also add the domain to the readme"* (in response to the offer to document the schema + dedupe migration order).
+
+### Fixed — Tree route now always re-renders on `router.refresh()`
+- **Symptom**: editor adds a relative → DB write succeeds (Network shows `201 Created`) → modal closes → tree doesn't update. Inconsistent — sometimes the same flow worked, sometimes the new person showed up at the root with no parent connection.
+- **Root cause**: Next 16 can opportunistically cache the SSR output of `app/[locale]/tree/page.tsx` even when the underlying `cookies()` call would normally mark it dynamic. When the client calls `router.refresh()` after an insert, Next sees the route as "already fresh" and doesn't actually re-execute `loadTree()`, so the new rows never reach the client.
+- **Fix**: explicit `export const dynamic = "force-dynamic"` + `export const revalidate = 0` on the tree route ([app/[locale]/tree/page.tsx](app/[locale]/tree/page.tsx)). This guarantees every render re-runs `loadTree` against Supabase.
+- **Belt-and-suspenders in `TreeCanvas`** ([components/tree/TreeCanvas.tsx](components/tree/TreeCanvas.tsx)): the parent's `AddRelativeForm.onClose` now always calls `router.refresh()` in addition to clearing `pendingAdd`. So even if the form's own dirty-tracking missed a write (e.g. background spouse-link inserts, future code paths), the tree still re-pulls on close.
+- User prompt: *"It is still does not work always (not consistant)"* + screenshot showing عاطف with two parent placeholders after picking an existing ازهار in the form.
+
+### Fixed — AddRelativeForm now refreshes when closed after a successful primary insert
+- **Bug** ([components/tree/AddRelativeForm.tsx](components/tree/AddRelativeForm.tsx)): after the primary insert (person + relationship row) succeeded, the form sometimes switched to the linkOthers follow-up step (e.g. "which spouse is the mother of this new son?"). If the editor closed the modal at that point — via the X button, clicking the backdrop, or pressing Escape — the existing code called `onClose` directly without `router.refresh()`, so the route didn't re-fetch. The new person + relationship were in the DB (Network tab showed 201 Created on the POST), but the tree continued displaying the stale snapshot — symptom: "I add a son and he shows up at the root and the relation doesn't update".
+- **Fix**: track a `dirtyRef` boolean inside the form; set it to `true` immediately after the primary `relationships` insert resolves (whether or not the form proceeds to linkOthers). Replace every close path (X button, backdrop click, Escape key, and the primary-step Cancel button) with a `closeAndMaybeRefresh` wrapper that calls `router.refresh()` first when `dirtyRef.current` is true, then `onClose`. The explicit Save paths still call `router.refresh()` unconditionally, so behavior on the happy path is unchanged.
+- User prompt: *"Adding relation does not work anymore!"* — diagnosed via Network tab showing `POST /rest/v1/relationships → 201 Created`, confirming the data reached the DB; the missing refresh was the only remaining culprit.
 
 ### Added — PDF export from FocusView
 - **"Export PDF" button in the FocusView toolbar** ([components/tree/TreeCanvas.tsx](components/tree/TreeCanvas.tsx)) — top-right of the focus-view container, with a download-arrow icon and a locale-aware label (تصدير PDF / Export PDF).
