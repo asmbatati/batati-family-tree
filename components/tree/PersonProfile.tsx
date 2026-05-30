@@ -73,6 +73,10 @@ type Props = {
   };
   focusOnLabel: string;
   onClose: () => void;
+  /** Temporarily hide the panel without dropping the selection. The parent
+   *  surfaces a small "show panel" chip while hidden so the user can bring
+   *  it back. Optional — falls back to onClose if not provided. */
+  onHide?: () => void;
   onSelect: (id: string) => void;
   onFocus: () => void;
   onRequestAdd: (key: RelativeKey) => void;
@@ -85,7 +89,7 @@ const ADD_OPTIONS: RelativeKey[] = [
 ];
 
 export default function PersonProfile({
-  person, people, relationships, locale, isEditor, dict, relationLabels, addDict, focusOnLabel, onClose, onSelect, onFocus, onRequestAdd
+  person, people, relationships, locale, isEditor, dict, relationLabels, addDict, focusOnLabel, onClose, onHide, onSelect, onFocus, onRequestAdd
 }: Props) {
   const router = useRouter();
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -279,13 +283,29 @@ export default function PersonProfile({
             </button>
           )}
         </div>
-        <button
-          onClick={onClose}
-          className="grid h-8 w-8 place-items-center rounded-full text-sand-600 hover:bg-sand-100"
-          aria-label={dict.close}
-        >
-          <CloseIcon className="h-5 w-5" />
-        </button>
+        <div className="flex items-center gap-1.5">
+          {onHide && (
+            <button
+              onClick={onHide}
+              className="inline-flex items-center gap-1 rounded-full border border-sand-300 bg-white px-2.5 py-1 text-[11px] font-medium text-sand-700 shadow-soft hover:bg-sand-50"
+              aria-label={locale === "ar" ? "إخفاء اللوحة" : "Hide panel"}
+              title={locale === "ar" ? "إخفاء اللوحة (دون فقد التحديد)" : "Hide the panel (keeps the selection)"}
+            >
+              {/* Chevron pointing toward the panel's edge: in LTR that's →, in RTL ← */}
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className={"h-3 w-3 " + (locale === "ar" ? "" : "rotate-180")} aria-hidden="true">
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
+              {locale === "ar" ? "إخفاء" : "Hide"}
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            className="grid h-8 w-8 place-items-center rounded-full text-sand-600 hover:bg-sand-100"
+            aria-label={dict.close}
+          >
+            <CloseIcon className="h-5 w-5" />
+          </button>
+        </div>
       </div>
       <div className="flex-1 overflow-y-auto p-6">
         <div className="flex items-start gap-4">

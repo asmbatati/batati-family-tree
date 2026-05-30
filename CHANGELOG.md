@@ -7,6 +7,150 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ---
 
+## [Unreleased] — 2026-05-30
+
+### Added — Multi-theme 3D-printable family piece with real carved names
+- Replaces the previous Print3DModal (flat plate + circular leaves, names only in the SVG preview) with a real multi-theme 3D model whose names are **carved as triangulated glyphs in the STL itself**.
+- **Five themes**, picked via a left-rail tab list inside the modal: Tree (default), Flower, Roots, Cloud + hearts, Classic (the old plate).
+- **Family scope**: per the user's spec, only the centred person + spouse(s) + children are included. Parents and siblings are excluded. The couple (center + first spouse) gets larger leaves (22 mm radius); children get smaller ones (14 mm).
+- **Real text-to-mesh** pipeline ([lib/print3d/text2mesh.ts](lib/print3d/text2mesh.ts)) — lazy-loads opentype.js + the bundled Amiri font on first export, runs glyph-by-glyph Bezier flattening at 0.18 mm chord tolerance, triangulates each glyph (with holes for letters like ع / و / o) via `earcut`, and extrudes the triangulation between configurable `zMin` / `zMax`. Arabic strings are auto-detected by Unicode range and reversed in glyph order so they read RTL when laid out at advancing x; opentype.js applies the font's own GSUB shaping (init/medi/fina/isol) internally.
+- **lib/stl.ts extended** (backwards-compatible):
+  - `buildSTL` overload that accepts `{ group, tris }[]` and emits one `solid <group>` block per group — slicers' "Split to objects" handles the multi-part case.
+  - `triangleFan(centre, ring, zMin, zMax)` — extruded fan around a centre point (hearts, petals).
+  - `extrudePolygon(flatCoords, holeIndices, triIndices, zMin, zMax)` — bridge from `earcut` output to STL facets. Used by `textToTriangles`.
+- **Theme modules** in `lib/print3d/themes/`:
+  - `tree.ts` — tapered trunk (3 stacked boxes) + base + horizontal branches + canopy of leaves.
+  - `flower.ts` — central disc + petals radially placed; couple as two large opposing petals, children interleaved 360°.
+  - `roots.ts` — trunk stub at the top + fan of downward roots, child leaves at root tips.
+  - `cloud.ts` — overlapping-disc cloud with carved couple names on the cloud body + hearts hanging from string tabs for each child.
+  - `plate.ts` — port of the previous flat-plate layout, kept as the "Classic" option.
+- **Composer** ([lib/print3d/compose.ts](lib/print3d/compose.ts)) — single STL / two-solid STL / three-file ZIP (via `fflate`). User picks via a Separation radio group in the right rail.
+- **UI restructured** to 3-pane (theme tabs / live preview / options rail). Right rail has sliders for carve depth (-1.5 mm engrave to +1.5 mm emboss), leaf depth, scale, and the Separation radio. Inline SVG preview re-renders on every option change (~200–600 ms once the font is loaded). Footer has Download STL + Download SVG.
+- **New file structure**:
+  - `lib/print3d/types.ts` — Slot, STLShape, SVGPreviewElement, ThemeLayout, ThemeOptions, Theme.
+  - `lib/print3d/slots.ts` — buildSlots(center, relationships, people) → [center, ...spouses, ...children].
+  - `lib/print3d/text2mesh.ts` — text → triangulated extrusion.
+  - `lib/print3d/themes/{tree,flower,roots,cloud,plate}.ts` + `index.ts` (registry).
+  - `lib/print3d/compose.ts` — single/multi-solid/ZIP composition.
+  - `public/fonts/print3d/Amiri-Regular.ttf` — bundled OFL-licensed Arabic + Latin font.
+- **Dependencies added** (all small, lazy-loaded via dynamic import — main bundle is unaffected): `opentype.js@^1.3.4`, `earcut@^2.2.4`, `fflate@^0.8.2`, plus `@types/opentype.js` and `@types/earcut`.
+- **Trade-offs**: glyphs with self-intersecting paths can confuse earcut; we catch and skip those gracefully (the rest of the name still prints). Mixed-script names (e.g. "Ahmad أحمد" in one string) aren't fully bidi-reordered — Arabic-predominant names get reversed, mixed stays in source order. Family-tree entries in practice are monolingual per name, so this is fine for v1.
+- User prompt: *"I want to create a meaningful tree that could be printed. First, only names are the person of interest, spouse, and children. Inspire how to do the names meshes from here https://github.com/romgere/text2stl … plan for different shapes that could be created. A tree where each name is on a part of it like the first picture. A flower where each name is part of the flower. A root where each name is a leaf. A cloud where each name is on a heart shape, …"*
+- Plan file: `C:\Users\asmal\.claude\plans\transient-skipping-pelican.md`.
+
+## [Superseded — 2026-05-30] flat-plate STL export
+The original "Export 3D model" entry below is superseded by the multi-theme entry above. Keeping the prose for the project history.
+
+### Added — 3D-printable family tree (STL + SVG export, flat plate)
+- **New "3D model" button** in the FocusView toolbar ([components/tree/TreeCanvas.tsx](components/tree/TreeCanvas.tsx)) — amber pill next to "Export PDF". Opens a modal that previews a wooden-art-style family piece for the centered person and downloads a print-ready file.
+- **[components/tree/Print3DModal.tsx](components/tree/Print3DModal.tsx)** — laid-out preview + download buttons:
+  - Family picked automatically: parents (top row), centre + spouses (second row), siblings (third), children (bottom). Up to 5 leaves per row.
+  - Inspired by the wooden tree-art pieces the user shared — each person gets a raised "leaf" disk on a base plate.
+  - Live SVG preview with cream gradient base + walnut-stained borders so you can see the print before downloading.
+  - Dimension card shows total mm size + thickness so you know if it'll fit your printer's bed before slicing.
+- **[lib/stl.ts](lib/stl.ts)** — dependency-free ASCII-STL builder. `boxTriangles` extrudes the base plate; `cylinderTriangles` extrudes each name-plate as a 32-sided n-gon. Outward-pointing normals computed per-triangle, SVG y is flipped to STL's y-up convention. `downloadSTL` / `downloadSVG` Blob-URL the output and trigger a browser download.
+- **STL geometry**: base plate `~240×variable` mm × 4mm thick; each leaf is `r=18` mm × 3mm raised relief above the base. Watertight — the leaves sit ON the plate (not boolean-merged) so the slicer fuses them as one solid in the first few layers, perfectly printable on a flat-bed FDM or resin printer.
+- **Names left for engraving / painting**: extruding readable Arabic/English text without a font-tessellation library would have added a huge dependency. Instead the SVG preview shows the labels (so a vinyl-cutter or laser etcher can apply them post-print), and the dimension card notes this trade-off.
+- **SVG export**: the same SVG used for the preview can be downloaded for laser-cut workflows. Plate is rounded rect, each leaf is a circle with the person's name centred — drop into Inkscape / Lightburn / your CAM of choice.
+- User prompt: *"I want you to create a new 3d view where we can export a mesh ready to print in a 3d printer."* + reference photos of wooden family-tree art pieces.
+
+### Changed — PDF export now fits the whole tree on a single page
+- **Bug**: tall or wide trees got split across multiple pages because the print engine kept using A3 landscape regardless of content shape. When the tree's natural height exceeded the page's, the bottom rows ended up on page 2 (or 3).
+- **Fix** ([components/tree/ExportPdfButton.tsx](components/tree/ExportPdfButton.tsx)): compute the content's aspect ratio at print time and *generate a custom @page size to match it*, so the whole diagram fits in one page regardless of shape.
+  - For SVGs: aspect ratio comes from the `viewBox` attribute (`width / height`). Falls back to the live `getBoundingClientRect()` if no viewBox.
+  - For HTML containers (Tree / Layers views): aspect ratio comes from `scrollWidth / scrollHeight` so the FULL natural size — including content currently hidden by overflow clips — is measured.
+  - Page width anchored at 420mm (A3 landscape width); page height = `width / aspect + 30mm` for the title block, clamped to `[150mm, 2000mm]` to avoid pathologic paper sizes.
+  - `@page { size: <Wmm> <Hmm>; margin: 0 }` + a small body padding emits the custom dimensions to the print engine. Chrome / Edge / Firefox all respect this for PDF output.
+- **CSS hardening**: `page-break-inside: avoid` and `break-inside: avoid` on the print container plus everything inside it; explicit `overflow: visible !important` on all `overflow-*` classes so the Tree-view's `max-h-[70vh]` scroll wrapper doesn't truncate during print.
+- Net effect: every view now exports as a single-page PDF sized exactly to the content's natural aspect ratio. Open the PDF and zoom — the entire tree is there, in one frame, no spillover.
+- User prompt: *"when I export to pdf, make the whole tree fit in one page. Because sometimes it gets seperated to several pages"*
+
+### Changed — Parents' marriage line now aligned with the parents' row
+- The marriage rail (horizontal line + rings icon) used to sit *below* the parents at `Y_RAIL = Y_PARENTS + nodeH/2 + 18`, with two vertical stubs running from each parent's bottom down to that rail. That looked like the parents had small antennae dangling beneath them.
+- **Now** ([components/tree/TreeCanvas.tsx](components/tree/TreeCanvas.tsx)): the horizontal line runs directly between the parents at `y = Y_PARENTS` (their visual center), splitting around the rings icon at `CX`. The vertical drop to the centered person starts from the icon's bottom and runs cleanly downward through the parent-icon midpoint.
+- Dropped the two stub lines from the parents to the old rail; the horizontal line connects from each parent's inner edge (`fatherX + nodeW/2` and `motherX - nodeW/2`) directly to the rings icon.
+
+User prompt: *"make the marriage connection between the father and mother inligned with them"*
+
+### Changed — Sibling boxes: milk back in its own box, both shifted off-center
+- The previous all-in-one merged box (full + halves + milk) was centered on the column under the centered person — directly on top of the parental drop line — and visually obscured it. Also, milk siblings aren't really the same category as blood siblings (no shared blood, different inheritance rules), so merging them was conceptually loose.
+- **Two boxes now** ([components/tree/TreeCanvas.tsx](components/tree/TreeCanvas.tsx)):
+  - Blood box (full + halfFromFather + halfFromMother, color-coded MixedKinBox) at `CX - SIB_SLOT`.
+  - Milk box (plain GroupBox, cream MILK_STYLE) at `CX + SIB_SLOT`.
+- Connection lines: one elbowed line per box back to the centered person (the milk line is dashed, matching the existing milk relationship style).
+- `Y_SIB_H` recomputed as the max of the two box heights (blood box gets a +14 fudge for its legend row; milk box doesn't have one).
+- The parental drop line at `CX` is now visually clear — no box overlaps it.
+
+User prompt: *"Return the milk siblings to its own box, and do not make the boxes on top of the parental line, make them shefted on the sides like before"*
+
+### Changed — Header layout: aligned baselines, no-wrap, compact brand
+- **Bug**: nav items wrapped to two lines ("My dashboard", "Sign out", "ابحث عن رابط", "تسجيل الخروج"). The brand tagline ("Family Tree — Heritage & Lineage") spanned 3 lines beside the logo. Heights of the email pill, sign-out button, and language switcher were all different. The whole bar looked uneven.
+- **Fix** ([components/Header.tsx](components/Header.tsx) + [components/LanguageSwitcher.tsx](components/LanguageSwitcher.tsx)):
+  - Header row is now fixed-height `h-14` with `items-center`, so every child sits on a single baseline.
+  - Every nav link, every pill, and the language switcher pills get `whitespace-nowrap` so they refuse to break to a second line.
+  - Brand tagline is now hidden below `lg` (it was the worst offender at smaller widths); brand name itself is hidden below `sm` (logo-only on phone).
+  - Nav links have responsive padding — tighter (`px-2.5 py-1.5`) on `md`, full (`px-3 py-2`) on `lg+`. Items now fit on a single row on the typical laptop width even with "My dashboard" + "Moderation" present.
+  - The auth area (editor pill / email / sign-out) is now consistent `h-8` controls with matching radii; email pill widened slightly (`max-w-[160px]`) and gets a `title` tooltip so hovering shows the full address.
+  - Language switcher rebuilt with the same `h-8` height and slimmer pills (`px-2.5 text-xs`) so it lines up perfectly with the sign-out and email pills.
+  - `nav` container uses `flex-1 justify-center` so nav items are centered between brand and auth area — gives the bar a balanced look.
+- The mobile nav bar (below `md`) is unchanged in structure but now `whitespace-nowrap` so items don't wrap when they scroll horizontally.
+
+User prompt: *"In the header (arbic and english) some text are not aligned and does not look good. Make all of them aligned and enhance the look"*
+
+### Fixed — Side panel now sits above the page header (consistent across LTR/RTL)
+- **Bug**: in LTR mode the page header (z-40) overlapped the side panel (z-30) — and because both the language-switcher pills and the panel are on the right side of the screen, the header visually obscured the panel's top header. In RTL the same z-mismatch existed but the panel sat on the left where the header had less visual content, so it wasn't noticed.
+- **Fix** ([components/Header.tsx](components/Header.tsx)): lowered the page header from `z-40` to `z-20`. Side panel keeps `z-30` and now visibly sits *on top of* the header in both locales.
+- Final z-index stack: page content (default) → page header (z-20) → side panel (z-30) → floating Hide/Close bar (z-40) → AddRelativeForm (z-50) → EditPersonForm (z-60) → WelcomeClaim (z-70). Each layer cleanly covers the one below it.
+- The page header is still functional — it's just visually below the panel when both occupy the same horizontal space.
+
+### Fixed — Hide + Close are now a floating bar OUTSIDE the side panel
+- The user reported they couldn't see *either* the new Hide pill OR the existing Close X button after the last change. Whatever's hiding them (panel internal overflow, RTL flex quirk, browser-extension overlay, anything else), the fix is to render the controls outside the panel entirely so panel internals can't affect them.
+- **Floating control bar** ([components/tree/TreeCanvas.tsx](components/tree/TreeCanvas.tsx)) — fixed at `top-4 end-4` with `z-40`, rendered only when `selected && profileVisible`. Two pills inside a rounded white card:
+  - **إخفاء / Hide** — calls `setProfileVisible(false)`. The existing bottom-end "Show panel" chip brings it back.
+  - **إغلاق / Close** — calls `setSelectedId(null)`. Drops the selection entirely.
+- z-index chosen to sit above the panel (z-30) but below the AddRelativeForm (z-50) and EditPersonForm (z-60) modals, so opening one of those correctly covers the bar.
+- The header controls inside PersonProfile are still there as a fallback for users who happen to find them, but the floating bar is now the primary entry point.
+
+### Changed — Hide-panel button is now a visible pill, not an easily-missed icon
+- The eye-off icon I added next to Close looked too similar to the X next to it; editors didn't notice it. Replaced with a labelled pill — chevron + "إخفاء / Hide" text — matching the existing "Focus on" / "Edit" button language ([components/tree/PersonProfile.tsx](components/tree/PersonProfile.tsx)).
+- Chevron direction flips for RTL/LTR so it always points toward the panel's screen edge.
+
+### Changed — Kin connection lines now elbowed
+- The L2 connection from each parent down to their respective kin box used `ConnectionLine` (a straight diagonal). The parents sit close to the center while the kin boxes sit further out at the same y — the diagonal looked ugly. Switched to `ElbowLine` (down → across → into the box) ([components/tree/TreeCanvas.tsx](components/tree/TreeCanvas.tsx)).
+
+### Changed — Centered person's siblings: one color-coded box instead of four
+- Previously the L3 row could render up to four separate `GroupBox`es (half-from-father, full, half-from-mother, milk). Replaced with a single `MixedKinBox` of all categories with a legend at the top ([components/tree/TreeCanvas.tsx](components/tree/TreeCanvas.tsx)).
+- The box is wider (`boxW + 60`) and centered on the column under the person. The L3 connection line is now a single elbowed line from the box bottom up to the centered person's top.
+- `Y_SIB_H` recomputed as the sum of all four counts + 14px legend fudge.
+
+User prompt: *"1- I still can not see the eye-off button 2- for the paternal and maternal links (boxes), change the lines from straight to elbowed 3- I like the color coded siblings, do the same idea to the person of interest siblings. Now if a person have full siblings, and half siblings from the father, and half siblings from the mother, there would be three boxes. Make them only one box but color code the siblings"*
+
+## [Unreleased] — 2026-05-29
+
+### Added — PersonProfile hide/show toggle
+- **Bug**: the side panel (z-30, fixed `end-0`) sometimes covered the part of the tree the editor wanted to see. Closing it dropped the selection — and re-selecting that person was extra friction.
+- **Fix**: new `onHide` prop on PersonProfile ([components/tree/PersonProfile.tsx](components/tree/PersonProfile.tsx)) that hides the panel *without* clearing `selectedId`. Eye-off icon next to the existing Close button. When hidden, TreeCanvas renders a floating chip at the bottom-end of the viewport with the selected person's initial — clicking the chip reopens the panel. `profileVisible` state is local to TreeCanvas; clearing `selectedId` resets it for next time.
+
+### Added — Father/mother siblings boxes (color-coded by half/full/milk)
+- **Replaced** the old paternal/maternal "kin" boxes in FocusView ([components/tree/TreeCanvas.tsx](components/tree/TreeCanvas.tsx)) with computed-from-`parent_of` father's-siblings and mother's-siblings boxes. The old boxes only showed people with explicit `uncle_paternal_of` / `aunt_paternal_of` rows, which most data doesn't have. The new boxes derive siblings from the underlying parent_of graph: anyone who shares at least one parent with the centered person's father / mother.
+- **Color-coded categories** per row in each box:
+  - **full** (red) — sibling shares both grandparents.
+  - **halfFather** (warm brown) — shares only the paternal-side grandfather.
+  - **halfMother** (rose) — shares only the paternal-side grandmother (mirrored for mother's box).
+  - **milk** (cream) — milk_sibling_of(parent, sibling) row.
+- New `MixedKinBox` component renders these with a category legend in the header and a colored dot beside each name. Falls back to the legacy uncle/aunt rows if no parent_of-derived siblings exist (so the box is never empty when the legacy data is the only source).
+- `Y_KIN_H` grew by a 14px header fudge to fit the legend row.
+
+### Added — Generalised PDF export across every view, with 4-gen lineage as the title
+- **New shared component** [components/tree/ExportPdfButton.tsx](components/tree/ExportPdfButton.tsx) — takes a `targetRef` (HTMLElement | SVGSVGElement), `title`, optional `subtitle`, and renders a button that opens a print-ready window with the cloned target + the document's stylesheets re-attached. Works equally well for SVG-only canvases (focus / descendants) and HTML-based views (tree / layers).
+- **All four view modes now export**:
+  - **Tree** and **Layers**: a new `ViewWithPdf` wrapper in TreeCanvas captures the view's container `<div>` via a ref and shows an Export button above it. Title is generic ("شجرة عائلة البطاطي" / "Al-Batati family tree").
+  - **Focus**: the inline `exportToPdf` was deleted; the shared button replaces it. Title: "شجرة العائلة — {name}". Subtitle: 5-name patrilineal lineage chain via `lineageName(center, …, 5)` — that's the centered person plus up to 4 forefathers, matching the editor's "name to the 4th grandfather" request.
+  - **Descendants**: Export button slotted into the existing toolbar alongside the zoom controls. Title: "الذرية — {name}". Same 5-name patrilineal subtitle.
+- The shared component HTML-escapes the title/subtitle text so a name containing `<` or `&` doesn't break the printed page.
+
+User prompt: *"1- The person form that shows when I click on a name some times block my view on the screen. I want the option to hide/show it. 2- I want the option of pdf export in all views. And in the focused and heritage views, I want to display the name to the 4th grandfather as the title. 3- In the focus view I want to see a box for the fathers siblings (all siblings in the same box but color coded, full siblings, siblings from father, from mother, and milk) and another box for mothers siblings"*
+
 ## [Unreleased] — 2026-05-27
 
 ### Added — Persist selected person + view mode in the URL (survives reload)

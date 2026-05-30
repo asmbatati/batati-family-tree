@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { Person, Relationship, TreeLayer } from "@/lib/types";
-import { siblingOrderCompare } from "@/lib/relationships";
+import { siblingOrderCompare, buildPatrilineMap, lineageName } from "@/lib/relationships";
+import ExportPdfButton from "./ExportPdfButton";
 
 type Node = {
   person: Person;
@@ -39,6 +40,7 @@ const MARGIN = 40;      // svg outer padding
 export default function DescendantsView({ center, people, relationships, locale, onSelect }: Props) {
   const [zoom, setZoom] = useState(1);
   const ar = locale === "ar";
+  const svgRef = useRef<SVGSVGElement | null>(null);
 
   const tree = useMemo(
     () => buildTree(center, people, relationships),
@@ -52,6 +54,14 @@ export default function DescendantsView({ center, people, relationships, locale,
   const stats = useMemo(() => computeStats(tree), [tree]);
 
   const centerName = ar ? center.nameAr : (center.nameEn || center.nameAr);
+
+  // PDF title subtitle — patrilineal chain up to 4 forefathers (5 names).
+  const peopleById = useMemo(() => new Map(people.map((p) => [p.id, p])), [people]);
+  const patrilineMap = useMemo(() => buildPatrilineMap(people, relationships), [people, relationships]);
+  const lineageChain = useMemo(
+    () => lineageName(center, peopleById, patrilineMap, locale, 5),
+    [center, peopleById, patrilineMap, locale],
+  );
 
   return (
     <div className="relative overflow-hidden rounded-3xl border border-sand-200 bg-white/70 p-4 shadow-soft sm:p-6">
@@ -75,37 +85,48 @@ export default function DescendantsView({ center, people, relationships, locale,
         </div>
       </div>
 
-      {/* Zoom controls */}
-      <div className="absolute top-4 end-4 z-10 flex items-center gap-1 rounded-full border border-sand-200 bg-white/95 p-1 shadow-soft">
-        <button
-          type="button"
-          onClick={() => setZoom((z) => Math.max(0.25, Math.round((z - 0.2) * 100) / 100))}
-          className="grid h-7 w-7 place-items-center rounded-full text-sand-700 hover:bg-sand-100"
-          aria-label={ar ? "تصغير" : "Zoom out"}
-        >
-          −
-        </button>
-        <button
-          type="button"
-          onClick={() => setZoom(1)}
-          className="rounded-full px-2 py-0.5 text-[11px] tabular-nums text-sand-700 hover:bg-sand-100"
-          title={ar ? "إعادة" : "Reset"}
-        >
-          {Math.round(zoom * 100)}%
-        </button>
-        <button
-          type="button"
-          onClick={() => setZoom((z) => Math.min(3, Math.round((z + 0.2) * 100) / 100))}
-          className="grid h-7 w-7 place-items-center rounded-full text-sand-700 hover:bg-sand-100"
-          aria-label={ar ? "تكبير" : "Zoom in"}
-        >
-          +
-        </button>
+      {/* Zoom + Export controls */}
+      <div className="absolute top-4 end-4 z-10 flex items-center gap-2">
+        <div className="flex items-center gap-1 rounded-full border border-sand-200 bg-white/95 p-1 shadow-soft">
+          <button
+            type="button"
+            onClick={() => setZoom((z) => Math.max(0.25, Math.round((z - 0.2) * 100) / 100))}
+            className="grid h-7 w-7 place-items-center rounded-full text-sand-700 hover:bg-sand-100"
+            aria-label={ar ? "تصغير" : "Zoom out"}
+          >
+            −
+          </button>
+          <button
+            type="button"
+            onClick={() => setZoom(1)}
+            className="rounded-full px-2 py-0.5 text-[11px] tabular-nums text-sand-700 hover:bg-sand-100"
+            title={ar ? "إعادة" : "Reset"}
+          >
+            {Math.round(zoom * 100)}%
+          </button>
+          <button
+            type="button"
+            onClick={() => setZoom((z) => Math.min(3, Math.round((z + 0.2) * 100) / 100))}
+            className="grid h-7 w-7 place-items-center rounded-full text-sand-700 hover:bg-sand-100"
+            aria-label={ar ? "تكبير" : "Zoom in"}
+          >
+            +
+          </button>
+        </div>
+        <div className="bg-white/95 rounded-full shadow-soft">
+          <ExportPdfButton
+            targetRef={svgRef as React.RefObject<SVGSVGElement | null>}
+            title={ar ? `الذرية — ${centerName}` : `Descendants — ${centerName}`}
+            subtitle={lineageChain}
+            locale={locale}
+          />
+        </div>
       </div>
 
       {/* Scroll viewport for the SVG */}
       <div className="overflow-auto" style={{ maxHeight: "78vh" }}>
         <svg
+          ref={svgRef}
           viewBox={`0 0 ${width} ${height}`}
           width={width * zoom}
           height={height * zoom}

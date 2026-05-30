@@ -11,8 +11,8 @@ export default function LanguageSwitcher({ currentLocale }: { currentLocale: Loc
   const rest = pathname.replace(/^\/(ar|en)/, "") || "/";
 
   return (
-    <div className="inline-flex items-center gap-1 rounded-full border border-sand-200 bg-white/70 px-1 py-1 text-sm shadow-soft backdrop-blur">
-      <GlobeIcon className="mx-1 h-4 w-4 text-sand-600" />
+    <div className="inline-flex h-8 items-center gap-0.5 rounded-full border border-sand-200 bg-white/70 px-1 text-sm shadow-soft backdrop-blur">
+      <GlobeIcon className="mx-1 h-3.5 w-3.5 text-sand-600" />
       {locales.map((loc) => {
         const active = loc === currentLocale;
         return (
@@ -20,7 +20,7 @@ export default function LanguageSwitcher({ currentLocale }: { currentLocale: Loc
             key={loc}
             href={`/${loc}${rest === "/" ? "" : rest}`}
             className={
-              "rounded-full px-3 py-1 transition " +
+              "whitespace-nowrap rounded-full px-2.5 py-1 text-xs transition " +
               (active
                 ? "bg-sand-500 text-white shadow"
                 : "text-sand-700 hover:bg-sand-100")

@@ -26,25 +26,27 @@ export default async function Header({ locale }: { locale: Locale }) {
   }
 
   return (
-    <header className="sticky top-0 z-40 border-b border-sand-200/70 bg-sand-50/80 backdrop-blur">
-      <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
-        <Link href={`/${locale}`} className="flex items-center gap-3 group">
-          <div className="grid h-10 w-10 place-items-center rounded-full bg-gradient-to-br from-sand-400 to-sand-600 text-white font-bold shadow-soft">
-            <span className="font-display text-lg">ب</span>
+    <header className="sticky top-0 z-20 border-b border-sand-200/70 bg-sand-50/80 backdrop-blur">
+      <div className="mx-auto flex h-14 max-w-7xl items-center gap-4 px-4 sm:px-6">
+        {/* Brand */}
+        <Link href={`/${locale}`} className="group flex shrink-0 items-center gap-2.5">
+          <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-gradient-to-br from-sand-400 to-sand-600 text-white font-bold shadow-soft">
+            <span className="font-display text-lg">{ar ? "ب" : "B"}</span>
           </div>
-          <div className="leading-tight">
-            <div className="font-display text-lg text-sand-800">{t.brand.name}</div>
-            <div className="text-xs text-sand-600">{t.brand.tagline}</div>
+          <div className="hidden leading-tight sm:block">
+            <div className="whitespace-nowrap font-display text-base text-sand-800">{t.brand.name}</div>
+            <div className="hidden whitespace-nowrap text-[11px] text-sand-600 lg:block">{t.brand.tagline}</div>
           </div>
         </Link>
 
-        <nav className="hidden md:block">
-          <ul className="flex items-center gap-1">
+        {/* Primary nav — wraps to mobile bar below md */}
+        <nav className="hidden flex-1 md:flex md:justify-center">
+          <ul className="flex items-center gap-0.5">
             {items.map((item) => (
               <li key={item.href}>
                 <Link
                   href={`/${locale}${item.href}`}
-                  className="rounded-full px-3 py-2 text-sm text-sand-700 hover:bg-sand-100 hover:text-sand-900"
+                  className="whitespace-nowrap rounded-full px-2.5 py-1.5 text-sm text-sand-700 transition hover:bg-sand-100 hover:text-sand-900 lg:px-3 lg:py-2"
                 >
                   {item.label}
                 </Link>
@@ -53,20 +55,21 @@ export default async function Header({ locale }: { locale: Locale }) {
           </ul>
         </nav>
 
-        <div className="flex items-center gap-2">
+        {/* Auth + language — pushed to the end */}
+        <div className="ms-auto flex shrink-0 items-center gap-1.5">
           <AuthArea locale={locale} user={viewer.user} editor={viewer.isEditor} dict={t.auth} />
           <LanguageSwitcher currentLocale={locale} />
         </div>
       </div>
 
-      {/* Mobile nav */}
+      {/* Mobile nav — same items, but visible on screens narrower than md */}
       <nav className="border-t border-sand-200/60 bg-sand-50/60 md:hidden">
         <ul className="mx-auto flex max-w-7xl items-center gap-1 overflow-x-auto px-4 py-2 text-sm">
           {items.map((item) => (
             <li key={item.href} className="shrink-0">
               <Link
                 href={`/${locale}${item.href}`}
-                className="rounded-full px-3 py-1.5 text-sand-700 hover:bg-sand-100"
+                className="whitespace-nowrap rounded-full px-3 py-1.5 text-sand-700 hover:bg-sand-100"
               >
                 {item.label}
               </Link>
@@ -99,7 +102,7 @@ function AuthArea({
     return (
       <Link
         href={`/${locale}/login`}
-        className="hidden rounded-full bg-sand-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-sand-800 sm:inline-flex"
+        className="hidden whitespace-nowrap rounded-full bg-sand-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-sand-800 sm:inline-flex"
       >
         {dict.signIn}
       </Link>
@@ -107,19 +110,19 @@ function AuthArea({
   }
 
   return (
-    <div className="hidden items-center gap-2 sm:flex">
-      <div className="flex items-center gap-1.5 rounded-full bg-white/80 px-3 py-1 text-xs text-sand-700 shadow-soft">
+    <div className="hidden items-center gap-1.5 sm:flex">
+      <div className="flex h-8 items-center gap-1.5 rounded-full bg-white/80 px-2.5 text-xs text-sand-700 shadow-soft">
         {editor && (
-          <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-800">
+          <span className="whitespace-nowrap rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-800">
             {dict.editor}
           </span>
         )}
-        <span className="max-w-[140px] truncate">{user.email}</span>
+        <span className="max-w-[160px] truncate" title={user.email ?? undefined}>{user.email}</span>
       </div>
       <form action="/auth/signout" method="post">
         <button
           type="submit"
-          className="rounded-full border border-sand-200 bg-white px-3 py-1.5 text-xs text-sand-700 hover:bg-sand-100"
+          className="h-8 whitespace-nowrap rounded-full border border-sand-200 bg-white px-3 text-xs text-sand-700 hover:bg-sand-100"
         >
           {dict.signOut}
         </button>

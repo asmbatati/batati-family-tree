@@ -4,7 +4,7 @@ import { useMemo, useRef, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import type { Person, Relationship, TreeLayer } from "@/lib/types";
 import { RELATIONSHIP_STYLE } from "@/lib/types";
-import { computeRelationshipsFor, siblingOrderCompare, styleForRel, type RelationshipEntry } from "@/lib/relationships";
+import { computeRelationshipsFor, siblingOrderCompare, styleForRel, buildPatrilineMap, lineageName, type RelationshipEntry } from "@/lib/relationships";
 import PersonNode from "./PersonNode";
 import LayerToggle from "./LayerToggle";
 import PersonProfile from "./PersonProfile";
@@ -15,6 +15,8 @@ import FocusFilters, { DEFAULT_FOCUS_FILTERS, type FocusFilterState, type FocusF
 import AddRelativeForm from "./AddRelativeForm";
 import AddPersonForm from "./AddPersonForm";
 import DescendantsView from "./DescendantsView";
+import ExportPdfButton from "./ExportPdfButton";
+import Print3DModal from "./Print3DModal";
 import { getRelationshipIcon, PlusIcon } from "@/components/icons";
 
 type RelativeKey =
@@ -140,6 +142,9 @@ export default function TreeCanvas({ people, relationships, locale, isEditor, ca
   const [focusFilters, setFocusFilters] = useState<FocusFilterState>(DEFAULT_FOCUS_FILTERS);
   const [pendingAdd, setPendingAdd] = useState<RelativeKey | null>(null);
   const [showAddPerson, setShowAddPerson] = useState(false);
+  // PersonProfile visibility — keeps `selectedId` set but hides the side
+  // panel so the editor can see the underlying tree without losing context.
+  const [profileVisible, setProfileVisible] = useState(true);
   const toggleFocus = (k: FocusFilterKey) => setFocusFilters((s) => ({ ...s, [k]: !s[k] }));
 
   // URL persistence — survives `window.location.reload()` after a save so the
@@ -269,14 +274,19 @@ export default function TreeCanvas({ people, relationships, locale, isEditor, ca
 
       {/* Main view */}
       {viewMode === "tree" && (
-        <CollapsibleTree
-          people={people}
-          relationships={relationships}
+        <ViewWithPdf
           locale={locale}
-          selectedId={selectedId}
-          searchQuery={search}
-          onSelect={setSelectedId}
-        />
+          title={locale === "ar" ? "شجرة عائلة البطاطي" : "Al-Batati family tree"}
+        >
+          <CollapsibleTree
+            people={people}
+            relationships={relationships}
+            locale={locale}
+            selectedId={selectedId}
+            searchQuery={search}
+            onSelect={setSelectedId}
+          />
+        </ViewWithPdf>
       )}
 
       {viewMode === "focus" && selected && (
@@ -323,20 +333,28 @@ export default function TreeCanvas({ people, relationships, locale, isEditor, ca
       )}
 
       {viewMode === "layers" && (
-        <LayeredView
-          generations={generations}
+        <ViewWithPdf
           locale={locale}
-          active={active}
-          isVisible={isVisible}
-          onSelect={setSelectedId}
-        />
+          title={locale === "ar" ? "شجرة عائلة البطاطي (بطبقات)" : "Al-Batati family tree (layered)"}
+        >
+          <LayeredView
+            generations={generations}
+            locale={locale}
+            active={active}
+            isVisible={isVisible}
+            onSelect={setSelectedId}
+          />
+        </ViewWithPdf>
       )}
 
       {/* Legend — shown in focus view since that's where colors mean the most */}
       {viewMode === "focus" && selected && <Legend treeDict={treeDict} />}
 
-      {/* Profile side panel */}
-      {selected && (
+      {/* Profile side panel. `profileVisible` lets the editor temporarily hide
+          the panel without dropping `selectedId` — useful when the panel
+          obscures something they want to see in the tree behind it. When
+          hidden, a small floating chip on the screen edge reveals it again. */}
+      {selected && profileVisible && (
         <PersonProfile
           person={selected}
           people={people}
@@ -348,10 +366,57 @@ export default function TreeCanvas({ people, relationships, locale, isEditor, ca
           addDict={treeDict.add}
           focusOnLabel={treeDict.actions.focusOn}
           onClose={() => setSelectedId(null)}
+          onHide={() => setProfileVisible(false)}
           onSelect={(id) => setSelectedId(id)}
           onFocus={() => setViewMode("focus")}
           onRequestAdd={setPendingAdd}
         />
+      )}
+      {selected && !profileVisible && (
+        <button
+          type="button"
+          onClick={() => setProfileVisible(true)}
+          className="fixed end-4 bottom-4 z-40 flex items-center gap-2 rounded-full border border-sand-300 bg-white px-3 py-2 text-xs font-medium text-sand-800 shadow-lg hover:bg-sand-50"
+          title={locale === "ar" ? "إظهار ملف الشخص" : "Show person profile"}
+        >
+          <span className="grid h-6 w-6 place-items-center rounded-full bg-sand-100 text-sand-700">
+            {(locale === "ar" ? selected.nameAr : (selected.nameEn || selected.nameAr)).charAt(0)}
+          </span>
+          {locale === "ar" ? "إظهار اللوحة" : "Show panel"}
+        </button>
+      )}
+
+      {/* Floating Hide + Close controls — rendered OUTSIDE the PersonProfile
+          panel so they can never be hidden by panel internals (overflow, RTL
+          quirks, etc.). z-40 sits above the panel (z-30) but below
+          AddRelativeForm (z-50) / EditPersonForm (z-60) modals, so when the
+          user opens one of those the floating bar is correctly covered. */}
+      {selected && profileVisible && (
+        <div className="fixed end-4 top-4 z-40 flex items-center gap-2 rounded-full border border-sand-300 bg-white/95 p-1 shadow-2xl backdrop-blur">
+          <button
+            type="button"
+            onClick={() => setProfileVisible(false)}
+            className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-sand-700 hover:bg-sand-100"
+            title={locale === "ar" ? "إخفاء اللوحة (دون فقد التحديد)" : "Hide panel (keeps selection)"}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className={"h-3.5 w-3.5 " + (locale === "ar" ? "" : "rotate-180")} aria-hidden="true">
+              <polyline points="15 18 9 12 15 6" />
+            </svg>
+            {locale === "ar" ? "إخفاء" : "Hide"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedId(null)}
+            className="inline-flex items-center gap-1.5 rounded-full bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-100"
+            title={locale === "ar" ? "إغلاق وإلغاء التحديد" : "Close (clear selection)"}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5" aria-hidden="true">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+            {locale === "ar" ? "إغلاق" : "Close"}
+          </button>
+        </div>
       )}
 
       {/* Centralized AddRelativeForm — triggered by side panel buttons or
@@ -577,6 +642,83 @@ function FocusView({
   maternalKin.sort(siblingOrderCompare);
   directChildren.sort(siblingOrderCompare);
 
+  // --- Father's & mother's siblings (computed from parent_of, not from
+  //     explicit uncle/aunt rows — the user's data uses parent_of edges).
+  //     Each sibling is categorized:
+  //       full          — shares BOTH of parent's parents
+  //       halfFather    — shares only parent's father (i.e., the grand-
+  //                       father on this side is the same)
+  //       halfMother    — shares only parent's mother
+  //       milk          — milk_sibling_of(parent, sibling) row
+  //     Color coding in the rendered box reflects the category.
+  type SibCategory = "full" | "halfFather" | "halfMother" | "milk";
+  type CategorizedSibling = { person: Person; category: SibCategory };
+  const siblingsOfParent = (parent: Person | null): CategorizedSibling[] => {
+    if (!parent) return [];
+    const parentParents = parentsOf.get(parent.id);
+    if (!parentParents) return [];
+    const gpFatherId = parentParents.fatherId;
+    const gpMotherId = parentParents.motherId;
+
+    const sibIds = new Set<string>();
+    for (const gp of [gpFatherId, gpMotherId]) {
+      if (!gp) continue;
+      for (const r of allRelationships) {
+        if (r.type !== "parent_of") continue;
+        if (r.fromId !== gp) continue;
+        if (r.toId === parent.id) continue;
+        sibIds.add(r.toId);
+      }
+    }
+
+    const out: CategorizedSibling[] = [];
+    for (const sibId of sibIds) {
+      const sib = peopleById.get(sibId);
+      if (!sib) continue;
+      const sp = parentsOf.get(sibId) ?? {};
+      const shareF = !!gpFatherId && sp.fatherId === gpFatherId;
+      const shareM = !!gpMotherId && sp.motherId === gpMotherId;
+      let category: SibCategory;
+      if (shareF && shareM) category = "full";
+      else if (shareF)       category = "halfFather";
+      else                   category = "halfMother";
+      out.push({ person: sib, category });
+    }
+
+    // Milk siblings of parent.
+    for (const r of allRelationships) {
+      if (r.type !== "milk_sibling_of") continue;
+      const otherId =
+        r.fromId === parent.id ? r.toId :
+        r.toId === parent.id ? r.fromId : null;
+      if (!otherId) continue;
+      if (out.some((c) => c.person.id === otherId)) continue;
+      const sib = peopleById.get(otherId);
+      if (!sib) continue;
+      out.push({ person: sib, category: "milk" });
+    }
+
+    // Category-then-sibling order. full → halfFather → halfMother → milk.
+    const catOrder: Record<SibCategory, number> = { full: 0, halfFather: 1, halfMother: 2, milk: 3 };
+    out.sort((a, b) => {
+      if (catOrder[a.category] !== catOrder[b.category]) return catOrder[a.category] - catOrder[b.category];
+      return siblingOrderCompare(a.person, b.person);
+    });
+    return out;
+  };
+  const fatherSiblings = siblingsOfParent(father);
+  const motherSiblings = siblingsOfParent(mother);
+
+  // The centered person's BLOOD siblings — merged into one color-coded box
+  // (full / halfFromFather / halfFromMother). Milk siblings stay in their
+  // own separate box; conceptually distinct (no shared blood, just a
+  // shared wet-nurse) and rendered in cream rather than red.
+  const centerSiblings: CategorizedSibling[] = [
+    ...fullSiblings.map((p) => ({ person: p, category: "full" as const })),
+    ...halfFromFather.map((p) => ({ person: p, category: "halfFather" as const })),
+    ...halfFromMother.map((p) => ({ person: p, category: "halfMother" as const })),
+  ];
+
   // Children grouped by their *other* parent (= the spouse who's also the mom).
   const knownSpouseIds = new Set(spouseEntries.map((s) => s.spouse.id));
   const motherIdByChild = new Map<string, string | null>();
@@ -639,17 +781,25 @@ function FocusView({
   const Y_PARENTS  = 80;  // center of father/mother
   const Y_RAIL     = Y_PARENTS + nodeH / 2 + 18; // 120 — marriage rail
   const Y_KIN_TOP  = 170; // top of kin boxes
+  // The mixed-kin box has a taller header (header + legend row = +14px over a
+  // plain GroupBox) so we add a fudge factor when computing Y_KIN_H.
+  const MIXED_HEADER_FUDGE = 14;
+  const fatherSibsCount = Math.max(fatherSiblings.length, paternalKin.length);
+  const motherSibsCount = Math.max(motherSiblings.length, maternalKin.length);
   const Y_KIN_H    = Math.max(
-    boxHeight(Math.max(1, paternalKin.length)),
-    boxHeight(Math.max(1, maternalKin.length)),
+    boxHeight(Math.max(1, fatherSibsCount)) + (fatherSibsCount > 0 ? MIXED_HEADER_FUDGE : 0),
+    boxHeight(Math.max(1, motherSibsCount)) + (motherSibsCount > 0 ? MIXED_HEADER_FUDGE : 0),
     boxHeight(0) + 10,
   );
   const Y_SIB_TOP  = Y_KIN_TOP + Y_KIN_H + 30;
+  // Sibling row now has TWO boxes: a merged blood-siblings box (full + the
+  // two half-categories, color-coded) on one side, and a milk-siblings box
+  // on the other. Row height is the taller of the two.
+  const bloodSibsCount = fullSiblings.length + halfFromFather.length + halfFromMother.length;
+  const milkSibsCount  = milkSiblings.length;
   const Y_SIB_H    = Math.max(
-    boxHeight(Math.max(1, halfFromFather.length)),
-    boxHeight(Math.max(1, fullSiblings.length)),
-    boxHeight(Math.max(1, halfFromMother.length)),
-    boxHeight(Math.max(1, milkSiblings.length)),
+    boxHeight(Math.max(1, bloodSibsCount)) + (bloodSibsCount > 0 ? 14 : 0),
+    boxHeight(Math.max(1, milkSibsCount)),
     boxHeight(0) + 10,
   );
   // Stacked spouses extend above Y_CENTER. Compute how many vertical columns
@@ -793,92 +943,49 @@ function FocusView({
   const CHILD_STYLE  = styleForRel("parent_of", true);  // green + child  (me → children)
 
   // -------- 4. PDF export.
-  // Opens a new window with a print-ready copy of the SVG (with the document's
-  // stylesheets re-attached so Tailwind classes inside foreignObject elements
-  // still render), then triggers the browser's print dialog. The user picks
-  // "Save as PDF" from there. Dependency-free.
+  // Uses the shared <ExportPdfButton/>. Title includes a 5-deep patrilineal
+  // lineage chain (name + up to 4 forefathers) as a subtitle, per the
+  // editor's request "display the name to the 4th grandfather as the title".
   const svgRef = useRef<SVGSVGElement | null>(null);
-  function exportToPdf() {
-    const svgEl = svgRef.current;
-    if (!svgEl) return;
-    const printWin = window.open("", "_blank");
-    if (!printWin) {
-      window.alert(locale === "ar" ? "متصفحك يمنع النوافذ المنبثقة." : "Your browser blocked the popup.");
-      return;
-    }
-    // Clone so we can strip width/height (let CSS scale via viewBox).
-    const clone = svgEl.cloneNode(true) as SVGSVGElement;
-    clone.removeAttribute("width");
-    clone.removeAttribute("height");
-    clone.setAttribute("preserveAspectRatio", "xMidYMid meet");
-    clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-    // Copy <link rel=stylesheet> and inline <style> tags from the host so the
-    // foreignObject HTML (which uses Tailwind utility classes) renders the
-    // same way it does in the live view.
-    const styles = Array.from(document.querySelectorAll('link[rel="stylesheet"], style'))
-      .map((el) => el.outerHTML)
-      .join("\n");
-    const personName = locale === "ar" ? center.nameAr : (center.nameEn || center.nameAr);
-    const titleText = locale === "ar" ? `شجرة العائلة — ${personName}` : `Family tree — ${personName}`;
-    const dateText = new Date().toLocaleDateString(locale === "ar" ? "ar" : "en");
-    const html = `<!DOCTYPE html>
-<html lang="${locale}" dir="${locale === "ar" ? "rtl" : "ltr"}">
-<head>
-<meta charset="UTF-8" />
-<title>${titleText}</title>
-${styles}
-<style>
-  body { margin: 0; padding: 24px; background: #fff; font-family: inherit; }
-  .pdf-title { text-align: center; font-size: 22px; font-weight: 600; margin-bottom: 4px; color: #3b2a10; }
-  .pdf-date  { text-align: center; font-size: 12px; color: #6b7280; margin-bottom: 16px; }
-  svg { display: block; margin: 0 auto; width: 100%; height: auto; max-width: 100%; }
-  @media print {
-    body { padding: 0; }
-    @page { size: A3 landscape; margin: 8mm; }
-  }
-</style>
-</head>
-<body>
-<div class="pdf-title">${titleText}</div>
-<div class="pdf-date">${dateText}</div>
-${clone.outerHTML}
-<script>
-  // Wait for stylesheets to settle, then print. Close after the dialog
-  // resolves (cancel or save) so the user isn't left with a stray window.
-  window.addEventListener("load", () => {
-    setTimeout(() => {
-      window.focus();
-      window.print();
-    }, 400);
-  });
-  window.addEventListener("afterprint", () => { window.close(); });
-</script>
-</body>
-</html>`;
-    printWin.document.open();
-    printWin.document.write(html);
-    printWin.document.close();
-  }
+  const lineagePatrilineMap = buildPatrilineMap(allPeople, allRelationships);
+  const lineageChain = lineageName(center, peopleById, lineagePatrilineMap, locale, 5);
+  const centerName = locale === "ar" ? center.nameAr : (center.nameEn || center.nameAr);
+  const [show3D, setShow3D] = useState(false);
 
   // -------- 5. Render. --------
   return (
     <div className="overflow-x-auto rounded-3xl border border-sand-200 bg-white/70 p-4 shadow-soft sm:p-6">
-      <div className="mb-3 flex items-center justify-end">
+      <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
         <button
           type="button"
-          onClick={exportToPdf}
-          className="inline-flex items-center gap-1.5 rounded-full border border-sand-300 bg-white px-3 py-1 text-xs font-medium text-sand-700 shadow-soft hover:bg-sand-50"
-          aria-label={locale === "ar" ? "تصدير إلى PDF" : "Export to PDF"}
-          title={locale === "ar" ? "تصدير إلى PDF" : "Export to PDF"}
+          onClick={() => setShow3D(true)}
+          className="inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800 shadow-soft hover:bg-amber-100"
+          title={locale === "ar" ? "تصدير نموذج للطباعة ثلاثية الأبعاد" : "Export 3D-printable model"}
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5" aria-hidden="true">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-            <polyline points="7 10 12 15 17 10" />
-            <line x1="12" y1="15" x2="12" y2="3" />
+            <path d="M12 2 L20 6 L20 16 L12 20 L4 16 L4 6 Z" />
+            <path d="M12 2 L12 20" />
+            <path d="M4 6 L12 10 L20 6" />
+            <path d="M4 16 L12 12 L20 16" opacity="0.6" />
           </svg>
-          {locale === "ar" ? "تصدير PDF" : "Export PDF"}
+          {locale === "ar" ? "نموذج 3D" : "3D model"}
         </button>
+        <ExportPdfButton
+          targetRef={svgRef as React.RefObject<SVGSVGElement | null>}
+          title={locale === "ar" ? `شجرة العائلة — ${centerName}` : `Family tree — ${centerName}`}
+          subtitle={lineageChain}
+          locale={locale}
+        />
       </div>
+      {show3D && (
+        <Print3DModal
+          center={center}
+          people={allPeople}
+          relationships={allRelationships}
+          locale={locale}
+          onClose={() => setShow3D(false)}
+        />
+      )}
       <div className="relative">
         <svg
           ref={svgRef}
@@ -888,14 +995,17 @@ ${clone.outerHTML}
           className="block max-w-none"
           aria-label="Family relationships"
         >
-          {/* ===== Level 1: marriage rail + vertical drop to L4 ===== */}
+          {/* ===== Level 1: marriage tie + vertical drop to L4.
+              Marriage line is now ALIGNED with the parents' row (y = Y_PARENTS)
+              — runs horizontally from each parent's inner edge to the rings
+              icon at CX. Drop to the centered person starts from the icon's
+              bottom and runs straight down through the parent-icon midpoint. */}
           {showParentsLayer && showMarriage ? (
             <g>
-              <line x1={fatherX} y1={Y_PARENTS + nodeH / 2} x2={fatherX} y2={Y_RAIL} stroke={SPOUSE_STYLE.color} strokeWidth={2} />
-              <line x1={motherX} y1={Y_PARENTS + nodeH / 2} x2={motherX} y2={Y_RAIL} stroke={SPOUSE_STYLE.color} strokeWidth={2} />
-              <line x1={fatherX} y1={Y_RAIL} x2={CX - 14} y2={Y_RAIL} stroke={SPOUSE_STYLE.color} strokeWidth={2} />
-              <line x1={CX + 14} y1={Y_RAIL} x2={motherX} y2={Y_RAIL} stroke={SPOUSE_STYLE.color} strokeWidth={2} />
-              <foreignObject x={CX - 14} y={Y_RAIL - 14} width={28} height={28}>
+              {/* Horizontal marriage tie at the parents' y, split by the rings icon. */}
+              <line x1={fatherX + nodeW / 2} y1={Y_PARENTS} x2={CX - 14} y2={Y_PARENTS} stroke={SPOUSE_STYLE.color} strokeWidth={2} />
+              <line x1={CX + 14} y1={Y_PARENTS} x2={motherX - nodeW / 2} y2={Y_PARENTS} stroke={SPOUSE_STYLE.color} strokeWidth={2} />
+              <foreignObject x={CX - 14} y={Y_PARENTS - 14} width={28} height={28}>
                 <div
                   className="grid h-7 w-7 place-items-center rounded-full border bg-white shadow-soft"
                   style={{ color: SPOUSE_STYLE.color, borderColor: SPOUSE_STYLE.color + "55" }}
@@ -903,10 +1013,10 @@ ${clone.outerHTML}
                   {getRelationshipIcon(SPOUSE_STYLE.icon, "h-3.5 w-3.5")}
                 </div>
               </foreignObject>
-              {/* Long vertical drop from rail bottom edge of icon to center top */}
-              <line x1={CX} y1={Y_RAIL + 14} x2={CX} y2={Y_CENTER - centerH / 2} stroke={PARENT_STYLE.color} strokeWidth={2.5} />
-              {/* Parent icon halfway between rail and center */}
-              <foreignObject x={CX - 14} y={(Y_RAIL + 14 + Y_CENTER - centerH / 2) / 2 - 14} width={28} height={28}>
+              {/* Vertical drop from rings icon bottom edge to center person top. */}
+              <line x1={CX} y1={Y_PARENTS + 14} x2={CX} y2={Y_CENTER - centerH / 2} stroke={PARENT_STYLE.color} strokeWidth={2.5} />
+              {/* Parent icon halfway between rings icon bottom and center top. */}
+              <foreignObject x={CX - 14} y={(Y_PARENTS + 14 + Y_CENTER - centerH / 2) / 2 - 14} width={28} height={28}>
                 <div
                   className="grid h-7 w-7 place-items-center rounded-full border bg-white shadow-soft"
                   style={{ color: PARENT_STYLE.color, borderColor: PARENT_STYLE.color + "55" }}
@@ -923,53 +1033,44 @@ ${clone.outerHTML}
             />
           ) : null}
 
-          {/* ===== L2: kin box connection lines (one per box) ===== */}
-          {paternalKin.length > 0 && father && showParentsLayer && (
-            <ConnectionLine
+          {/* ===== L2: kin box connection lines (one per box) =====
+              Elbowed routing — down from the parent node's bottom edge, then
+              across at a mid y, then down to the kin box top. Reads cleaner
+              than a diagonal line when the parents sit close to the center
+              and the kin boxes sit further out at the same y. */}
+          {(fatherSiblings.length > 0 || paternalKin.length > 0) && father && showParentsLayer && (
+            <ElbowLine
               from={{ x: fatherX, y: Y_PARENTS + nodeH / 2 }}
               to={{ x: CX - KIN_OFFSET, y: Y_KIN_TOP }}
               style={UNCLE_P_STYLE}
             />
           )}
-          {maternalKin.length > 0 && mother && showParentsLayer && (
-            <ConnectionLine
+          {(motherSiblings.length > 0 || maternalKin.length > 0) && mother && showParentsLayer && (
+            <ElbowLine
               from={{ x: motherX, y: Y_PARENTS + nodeH / 2 }}
               to={{ x: CX + KIN_OFFSET, y: Y_KIN_TOP }}
               style={UNCLE_M_STYLE}
             />
           )}
 
-          {/* ===== L3: sibling box connection lines — ALWAYS to the center
-              person, regardless of category. The box header already tells
-              you which parent is shared. Full siblings, half-from-father,
-              and half-from-mother all use the sibling style (red blood);
-              milk siblings keep the dashed cream milk style. */}
-          {(() => {
-            const lines: React.ReactNode[] = [];
-            const centerTopY = Y_CENTER - centerH / 2;
-            const slot = (boxes: { count: number; x: number; style: typeof SIB_STYLE; dashed?: boolean; key: string }[]) => {
-              for (const b of boxes) {
-                if (b.count === 0) continue;
-                const boxBottomY = Y_SIB_TOP + boxHeight(b.count);
-                lines.push(
-                  <ElbowLine
-                    key={b.key}
-                    from={{ x: b.x, y: boxBottomY }}
-                    to={{ x: CX, y: centerTopY }}
-                    style={b.style}
-                    dashed={b.dashed}
-                  />,
-                );
-              }
-            };
-            slot([
-              { count: halfFromFather.length, x: CX - SIB_SLOT * 2 + 30, style: SIB_STYLE, key: "conn-halffa" },
-              { count: fullSiblings.length,   x: CX - SIB_SLOT,           style: SIB_STYLE, key: "conn-full"   },
-              { count: halfFromMother.length, x: CX + SIB_SLOT * 2 - 30, style: SIB_STYLE, key: "conn-halfmo" },
-              { count: milkSiblings.length,   x: CX + SIB_SLOT,           style: MILK_STYLE, dashed: true, key: "conn-milk" },
-            ]);
-            return lines;
-          })()}
+          {/* ===== L3: elbowed connections from each of the two sibling
+              boxes down to the centered person. Blood box on one side,
+              milk box on the other. Milk uses the dashed cream style. */}
+          {centerSiblings.length > 0 && (
+            <ElbowLine
+              from={{ x: CX - SIB_SLOT, y: Y_SIB_TOP + boxHeight(centerSiblings.length) + 14 }}
+              to={{ x: CX, y: Y_CENTER - centerH / 2 }}
+              style={SIB_STYLE}
+            />
+          )}
+          {milkSiblings.length > 0 && (
+            <ElbowLine
+              from={{ x: CX + SIB_SLOT, y: Y_SIB_TOP + boxHeight(milkSiblings.length) }}
+              to={{ x: CX, y: Y_CENTER - centerH / 2 }}
+              style={MILK_STYLE}
+              dashed
+            />
+          )}
 
           {/* ===== L4: center + spouse marriage lines.
               Layout: 1 spouse → one side, 2 → one each side, 3+ → start
@@ -1276,64 +1377,56 @@ ${clone.outerHTML}
           )}
 
           {/* ===== L2: kin boxes ===== */}
-          {paternalKin.length > 0 && (
-            <GroupBox
+          {/* Father's siblings — computed from parent_of relationships rather
+              than from explicit uncle/aunt rows. Color-coded per category:
+              full (red), half-from-father (warm brown), half-from-mother
+              (rose), milk (cream). Falls back to the legacy uncle/aunt rows
+              when no parent_of-derived siblings exist. */}
+          {(fatherSiblings.length > 0 || paternalKin.length > 0) && (
+            <MixedKinBox
               x={CX - KIN_OFFSET}
               y={Y_KIN_TOP}
               width={boxW}
-              title={locale === "ar" ? "أعمام وعمات" : "Paternal kin"}
-              members={paternalKin}
-              color={UNCLE_P_STYLE.color}
+              title={locale === "ar" ? "أعمام وعمات (إخوة الأب)" : "Paternal kin (father's siblings)"}
+              headerColor={UNCLE_P_STYLE.color}
+              members={
+                fatherSiblings.length > 0
+                  ? fatherSiblings
+                  : paternalKin.map((p) => ({ person: p, category: "full" as const }))
+              }
               locale={locale}
               onSelect={onSelect}
             />
           )}
-          {maternalKin.length > 0 && (
-            <GroupBox
+          {(motherSiblings.length > 0 || maternalKin.length > 0) && (
+            <MixedKinBox
               x={CX + KIN_OFFSET}
               y={Y_KIN_TOP}
               width={boxW}
-              title={locale === "ar" ? "أخوال وخالات" : "Maternal kin"}
-              members={maternalKin}
-              color={UNCLE_M_STYLE.color}
+              title={locale === "ar" ? "أخوال وخالات (إخوة الأم)" : "Maternal kin (mother's siblings)"}
+              headerColor={UNCLE_M_STYLE.color}
+              members={
+                motherSiblings.length > 0
+                  ? motherSiblings
+                  : maternalKin.map((p) => ({ person: p, category: "full" as const }))
+              }
               locale={locale}
               onSelect={onSelect}
             />
           )}
 
-          {/* ===== L3: sibling boxes ===== */}
-          {halfFromFather.length > 0 && (
-            <GroupBox
-              x={CX - SIB_SLOT * 2 + 30}
-              y={Y_SIB_TOP}
-              width={boxW}
-              title={locale === "ar" ? "إخوة من الأب" : "Half-siblings (father)"}
-              members={halfFromFather}
-              color={SIB_STYLE.color}
-              locale={locale}
-              onSelect={onSelect}
-            />
-          )}
-          {fullSiblings.length > 0 && (
-            <GroupBox
+          {/* ===== L3: centered person's siblings — TWO boxes shifted to the
+              sides (so the parental drop line at CX stays clear). The blood-
+              siblings box (full + halves) sits on one side, color-coded.
+              Milk siblings get their own box on the other side. ===== */}
+          {centerSiblings.length > 0 && (
+            <MixedKinBox
               x={CX - SIB_SLOT}
               y={Y_SIB_TOP}
               width={boxW}
-              title={locale === "ar" ? "الإخوة" : "Siblings"}
-              members={fullSiblings}
-              color={SIB_STYLE.color}
-              locale={locale}
-              onSelect={onSelect}
-            />
-          )}
-          {halfFromMother.length > 0 && (
-            <GroupBox
-              x={CX + SIB_SLOT * 2 - 30}
-              y={Y_SIB_TOP}
-              width={boxW}
-              title={locale === "ar" ? "إخوة من الأم" : "Half-siblings (mother)"}
-              members={halfFromMother}
-              color={SIB_STYLE.color}
+              title={locale === "ar" ? "الإخوة والأخوات" : "Siblings"}
+              headerColor={SIB_STYLE.color}
+              members={centerSiblings}
               locale={locale}
               onSelect={onSelect}
             />
@@ -1437,6 +1530,79 @@ function ConnectionLine({
  *  The inner div uses `flex h-full` so its bottom edge sits exactly at the
  *  foreignObject's bottom — that's what `boxHeight` advertises, and what the
  *  connection lines anchor to. */
+// Color-coding for the parent's siblings mixed-category box.
+const SIB_CATEGORY_STYLE: Record<"full" | "halfFather" | "halfMother" | "milk", { color: string; ar: string; en: string }> = {
+  full:       { color: "#b3261e", ar: "شقيق",       en: "Full" },
+  halfFather: { color: "#a26337", ar: "من الأب",   en: "Half (father)" },
+  halfMother: { color: "#c4669e", ar: "من الأم",   en: "Half (mother)" },
+  milk:       { color: "#8f7b51", ar: "رضاعة",     en: "Milk" },
+};
+
+function MixedKinBox({
+  x, y, width, title, headerColor, members, locale, onSelect,
+}: {
+  x: number; y: number; width: number;
+  title: string;
+  headerColor: string;
+  members: { person: Person; category: "full" | "halfFather" | "halfMother" | "milk" }[];
+  locale: "ar" | "en";
+  onSelect: (id: string) => void;
+}) {
+  const headerH = 38; // a touch taller — fits the title + legend row
+  const rowH = 26;
+  const height = headerH + members.length * rowH;
+  // Distinct categories present in this box, in stable display order.
+  const cats = (["full", "halfFather", "halfMother", "milk"] as const).filter((c) =>
+    members.some((m) => m.category === c),
+  );
+  return (
+    <foreignObject x={x - width / 2} y={y} width={width} height={height}>
+      <div
+        className="flex h-full flex-col overflow-hidden rounded-2xl border bg-white shadow-soft"
+        style={{ borderColor: headerColor }}
+      >
+        <div
+          className="px-3 pt-1 pb-0.5 text-[10px] font-medium uppercase tracking-wide"
+          style={{ background: headerColor + "22", color: headerColor }}
+        >
+          {title} · {members.length}
+        </div>
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 px-3 pb-1 text-[9px]" style={{ background: headerColor + "11" }}>
+          {cats.map((c) => (
+            <span key={c} className="inline-flex items-center gap-1 text-sand-700">
+              <span className="inline-block h-2 w-2 rounded-full" style={{ background: SIB_CATEGORY_STYLE[c].color }} />
+              {locale === "ar" ? SIB_CATEGORY_STYLE[c].ar : SIB_CATEGORY_STYLE[c].en}
+            </span>
+          ))}
+        </div>
+        <ul className="flex-1 divide-y divide-sand-100">
+          {members.map(({ person, category }) => (
+            <li key={person.id}>
+              <button
+                onClick={() => onSelect(person.id)}
+                className="flex w-full items-center gap-2 truncate px-3 py-1 text-xs text-sand-800 hover:bg-sand-50"
+                title={locale === "ar" ? person.nameAr : (person.nameEn || person.nameAr)}
+              >
+                <span
+                  className="inline-block h-2 w-2 shrink-0 rounded-full"
+                  style={{ background: SIB_CATEGORY_STYLE[category].color }}
+                  aria-label={locale === "ar" ? SIB_CATEGORY_STYLE[category].ar : SIB_CATEGORY_STYLE[category].en}
+                />
+                <span className="truncate">
+                  {locale === "ar" ? person.nameAr : (person.nameEn || person.nameAr)}
+                </span>
+                {person.generation !== undefined && (
+                  <span className="ms-auto shrink-0 text-[9px] text-sand-500">G{person.generation}</span>
+                )}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </foreignObject>
+  );
+}
+
 function GroupBox({
   x, y, width, title, members, color, locale, onSelect,
 }: {
@@ -1529,6 +1695,34 @@ function NodeButton({
 }
 
 // ---------------------------------------------------------------------------
+
+/** Wraps a view (CollapsibleTree, LayeredView, etc.) with a captured container
+ *  + an Export PDF button. The button clones the container and prints it via
+ *  the shared <ExportPdfButton/>. Used for the tree + layers views where
+ *  there isn't a focused person to derive a lineage subtitle from. */
+function ViewWithPdf({
+  children,
+  title,
+  locale,
+}: {
+  children: React.ReactNode;
+  title: string;
+  locale: "ar" | "en";
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  return (
+    <div>
+      <div className="mb-3 flex justify-end">
+        <ExportPdfButton
+          targetRef={ref}
+          title={title}
+          locale={locale}
+        />
+      </div>
+      <div ref={ref}>{children}</div>
+    </div>
+  );
+}
 
 function EmptyFocus({ message }: { message: string }) {
   return (
